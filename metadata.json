@@ -1,0 +1,6 @@
+{
+  "name": "Meskot",
+  "description": "Habesha and Ethiopian community social network with posts, stories, real-time messaging, groups, and photo albums in English and Amharic.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

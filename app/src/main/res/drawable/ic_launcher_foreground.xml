@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Arched window outer frame -->
+    <path
+        android:pathData="M 34,44 C 34,30 43,24 54,24 C 65,24 74,30 74,44 L 74,80 C 74,83 72,84 69,84 L 39,84 C 36,84 34,83 34,80 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:startX="34"
+                android:startY="24"
+                android:endX="74"
+                android:endY="84"
+                android:type="linear">
+                <item android:offset="0.0" android:color="#D4A355" />
+                <item android:offset="0.5" android:color="#B8863A" />
+                <item android:offset="1.0" android:color="#8F6524" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Inner window panes (cutouts) -->
+    <!-- Top left pane -->
+    <path
+        android:pathData="M 38,44 C 38,34 44,30 52,29 L 52,52 L 38,52 Z"
+        android:fillColor="#1B2A22" />
+    <!-- Top right pane -->
+    <path
+        android:pathData="M 56,29 C 64,30 70,34 70,44 L 70,52 L 56,52 Z"
+        android:fillColor="#1B2A22" />
+    <!-- Bottom left pane -->
+    <path
+        android:pathData="M 38,56 L 52,56 L 52,79 L 38,79 Z"
+        android:fillColor="#1B2A22" />
+    <!-- Bottom right pane -->
+    <path
+        android:pathData="M 56,56 L 70,56 L 70,79 L 56,79 Z"
+        android:fillColor="#1B2A22" />
+
+    <!-- Center accent cross diamond -->
+    <path
+        android:pathData="M 54,50 L 58,54 L 54,58 L 50,54 Z"
+        android:fillColor="#8C2F39" />
+</vector>
