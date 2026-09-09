@@ -189,6 +189,10 @@ fun ChatScreen(
     recipient: User,
     currentLanguage: AppLanguage
 ) {
+    LaunchedEffect(recipient.uid) {
+        viewModel.listenToMessages(recipient.uid)
+    }
+
     val messages = viewModel.getMessagesForUser(recipient.uid)
     var textInput by remember { mutableStateOf("") }
     val listState = rememberLazyListState()

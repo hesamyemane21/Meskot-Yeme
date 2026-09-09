@@ -362,9 +362,54 @@ class MeskotRepository(private val context: Context) {
     }
 
     // FRIENDS
+    private var friendRequestsListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var messagesListener: com.google.firebase.firestore.ListenerRegistration? = null
+
+    private fun getConversationId(uid1: String, uid2: String): String {
+        return if (uid1 < uid2) "${uid1}_${uid2}" else "${uid2}_${uid1}"
+    }
+
+    fun listenToFriendRequests() {
+        val user = _currentUser.value ?: return
+        friendRequestsListener?.remove()
+        friendRequestsListener = FirebaseManager.listenToFriendRequests(user.uid) { requests ->
+            val pendingIncomingSenderIds = requests
+                .filter { it.receiverId == user.uid && it.status == "pending" }
+                .map { it.senderId }
+                .toSet()
+            _incomingRequests.value = _users.value.filter { it.uid in pendingIncomingSenderIds }
+
+            val pendingOutgoingReceiverIds = requests
+                .filter { it.senderId == user.uid && it.status == "pending" }
+                .map { it.receiverId }
+                .toSet()
+            _outgoingRequests.value = pendingOutgoingReceiverIds
+
+            val acceptedPairs = requests.filter { it.status == "accepted" }
+            val newFriends = acceptedPairs.flatMap { listOf(it.senderId, it.receiverId) }
+                .filter { it != user.uid }
+                .toSet()
+            if (newFriends.isNotEmpty()) {
+                _friends.value = _friends.value + newFriends
+            }
+        }
+    }
+
+    fun listenToMessages(otherUid: String) {
+        val user = _currentUser.value ?: return
+        val convId = getConversationId(user.uid, otherUid)
+        messagesListener?.remove()
+        messagesListener = FirebaseManager.listenToMessages(convId) { firestoreMessages ->
+            val currentMsgs = _conversations.value[otherUid] ?: emptyList()
+            val merged = (currentMsgs + firestoreMessages).distinctBy { it.id }
+            _conversations.value = _conversations.value + (otherUid to merged)
+        }
+    }
+
     fun sendFriendRequest(toUid: String) {
         val user = _currentUser.value ?: return
         _outgoingRequests.value = _outgoingRequests.value + toUid
+        FirebaseManager.sendFriendRequest(user.uid, toUid)
         addNotification(
             fromUid = user.uid,
             fromName = user.displayName,
@@ -404,15 +449,17 @@ class MeskotRepository(private val context: Context) {
 
     fun sendMessage(otherUid: String, text: String) {
         val user = _currentUser.value ?: return
+        val convId = getConversationId(user.uid, otherUid)
         val newMsg = ChatMessage(
             id = "msg_" + System.currentTimeMillis(),
-            convoId = otherUid,
+            convoId = convId,
             fromUid = user.uid,
             text = text,
             createdAt = System.currentTimeMillis()
         )
         val currentMsgs = _conversations.value[otherUid] ?: emptyList()
         _conversations.value = _conversations.value + (otherUid to (currentMsgs + newMsg))
+        FirebaseManager.sendMessage(convId, user.uid, text)
         addNotification(
             fromUid = user.uid,
             fromName = user.displayName,

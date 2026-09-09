@@ -299,6 +299,18 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
         showMessage("Removed from friends")
     }
 
+    init {
+        listenToFriendRequests()
+    }
+
+    fun listenToFriendRequests() {
+        repository.listenToFriendRequests()
+    }
+
+    fun listenToMessages(otherUid: String) {
+        repository.listenToMessages(otherUid)
+    }
+
     // Messages
     fun getMessagesForUser(otherUid: String): List<ChatMessage> {
         return repository.getMessages(otherUid)

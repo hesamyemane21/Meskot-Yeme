@@ -5,11 +5,17 @@ import android.util.Log
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.Filter
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 
 object FirebaseManager {
     private const val TAG = "FirebaseManager"
     private var isInitialized = false
+
+    // Collections
+    const val COL_FRIEND_REQUESTS = "friend_requests"
+    const val COL_MESSAGES = "messages"
 
     var auth: FirebaseAuth? = null
         private set
@@ -42,4 +48,98 @@ object FirebaseManager {
     }
 
     fun isConfigured(): Boolean = isInitialized && auth != null && firestore != null
+
+    fun listenToFriendRequests(
+        userId: String,
+        onRequestsUpdated: (List<FriendRequest>) -> Unit
+    ): ListenerRegistration? {
+        val db = firestore ?: return null
+        return db.collection(COL_FRIEND_REQUESTS)
+            .where(
+                Filter.or(
+                    Filter.equalTo("receiverId", userId),
+                    Filter.equalTo("senderId", userId)
+                )
+            )
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "Listen to friend requests failed", error)
+                    return@addSnapshotListener
+                }
+                val requests = snapshot?.documents?.mapNotNull { doc ->
+                    doc.toObject(FriendRequest::class.java)?.copy(id = doc.id)
+                } ?: emptyList()
+                onRequestsUpdated(requests)
+            }
+    }
+
+    fun sendFriendRequest(senderId: String, receiverId: String, onComplete: (Boolean) -> Unit = {}) {
+        val db = firestore ?: run { onComplete(false); return }
+        val req = mapOf(
+            "senderId" to senderId,
+            "receiverId" to receiverId,
+            "status" to "pending",
+            "createdAt" to System.currentTimeMillis()
+        )
+        db.collection(COL_FRIEND_REQUESTS)
+            .add(req)
+            .addOnSuccessListener { onComplete(true) }
+            .addOnFailureListener { onComplete(false) }
+    }
+
+    fun acceptFriendRequest(requestId: String, onComplete: (Boolean) -> Unit = {}) {
+        val db = firestore ?: run { onComplete(false); return }
+        db.collection(COL_FRIEND_REQUESTS)
+            .document(requestId)
+            .update("status", "accepted")
+            .addOnSuccessListener { onComplete(true) }
+            .addOnFailureListener { onComplete(false) }
+    }
+
+    fun rejectFriendRequest(requestId: String, onComplete: (Boolean) -> Unit = {}) {
+        val db = firestore ?: run { onComplete(false); return }
+        db.collection(COL_FRIEND_REQUESTS)
+            .document(requestId)
+            .update("status", "rejected")
+            .addOnSuccessListener { onComplete(true) }
+            .addOnFailureListener { onComplete(false) }
+    }
+
+    fun listenToMessages(
+        convId: String,
+        onMessagesUpdated: (List<ChatMessage>) -> Unit
+    ): ListenerRegistration? {
+        val db = firestore ?: return null
+        return db.collection(COL_MESSAGES)
+            .whereEqualTo("convId", convId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "Listen to messages failed", error)
+                    return@addSnapshotListener
+                }
+                val messages = snapshot?.documents?.mapNotNull { doc ->
+                    doc.toObject(ChatMessage::class.java)?.copy(id = doc.id)
+                } ?: emptyList()
+                onMessagesUpdated(messages)
+            }
+    }
+
+    fun sendMessage(
+        convId: String,
+        fromUid: String,
+        text: String,
+        onComplete: (Boolean) -> Unit = {}
+    ) {
+        val db = firestore ?: run { onComplete(false); return }
+        val msg = mapOf(
+            "convId" to convId,
+            "fromUid" to fromUid,
+            "text" to text,
+            "createdAt" to System.currentTimeMillis()
+        )
+        db.collection(COL_MESSAGES)
+            .add(msg)
+            .addOnSuccessListener { onComplete(true) }
+            .addOnFailureListener { onComplete(false) }
+    }
 }
