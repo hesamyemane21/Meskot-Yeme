@@ -1,0 +1,20 @@
+{
+  "project_info": {
+    "project_number": "1083041536701",
+    "firebase_url": "https://meskot-b1a69-default-rtdb.firebaseio.com",
+    "project_id": "meskot-b1a69",
+    "storage_bucket": "meskot-b1a69.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1083041536701:web:4654f20e5ae08a2d0435d4"
+      },
+      "api_key": [
+        {
+          "current_key": "AIzaSyD9j6Emef7z1sxtGuqgEePwIJetPo4ZhQQ"
+        }
+      ]
+    }
+  ]
+}
