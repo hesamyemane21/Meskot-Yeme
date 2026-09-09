@@ -139,7 +139,8 @@ fun MeskotApp(viewModel: MeskotViewModel) {
                         onOpenComposer = { viewModel.openComposer() },
                         onOpenSearch = { viewModel.navigateTo(ScreenTab.FRIENDS) },
                         onOpenMenu = { viewModel.navigateTo(ScreenTab.MENU) },
-                        onProfileClick = { currentUser?.let { viewModel.openProfile(it) } }
+                        onProfileClick = { currentUser?.let { viewModel.openProfile(it) } },
+                        onLogout = { viewModel.logout() }
                     )
 
                     // Web App's exact Icon Nav Bar with Badges

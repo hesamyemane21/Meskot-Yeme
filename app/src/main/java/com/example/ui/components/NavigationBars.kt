@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -36,6 +37,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -60,168 +62,200 @@ fun TopNavBar(
     onOpenComposer: () -> Unit,
     onOpenSearch: () -> Unit,
     onOpenMenu: () -> Unit,
-    onProfileClick: () -> Unit
+    onProfileClick: () -> Unit,
+    onLogout: () -> Unit = {}
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        color = Paper.copy(alpha = 0.95f),
-        shadowElevation = 2.dp
+        color = Paper.copy(alpha = 0.96f),
+        shadowElevation = 1.dp
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Brand Logo & Title
+            // Left: Brand Logo & Title + Language Switcher
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clickable { onProfileClick() }
-                    .padding(end = 8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.weight(1f, fill = false)
             ) {
-                // Arched Meskot brand mark
-                Box(
+                // Brand Logo & Subtitle
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 4.dp, bottomEnd = 4.dp))
-                        .background(Brush.linearGradient(listOf(Gold, GoldDeep)))
-                        .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(topStart = 10.dp, topEnd = 10.dp, bottomStart = 4.dp, bottomEnd = 4.dp)),
-                    contentAlignment = Alignment.Center
+                        .clickable { onProfileClick() }
+                        .padding(end = 2.dp)
                 ) {
-                    // Window lattice crossbars
+                    // Arched Meskot brand mark
                     Box(
                         modifier = Modifier
-                            .width(1.5.dp)
-                            .height(26.dp)
-                            .background(Color.White.copy(alpha = 0.7f))
-                    )
-                    Box(
-                        modifier = Modifier
-                            .width(26.dp)
-                            .height(1.5.dp)
-                            .background(Color.White.copy(alpha = 0.7f))
-                    )
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 3.dp, bottomEnd = 3.dp))
+                            .background(Brush.linearGradient(listOf(Gold, GoldDeep)))
+                            .border(1.dp, Color.White.copy(alpha = 0.35f), RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 3.dp, bottomEnd = 3.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        // Window lattice crossbars
+                        Box(
+                            modifier = Modifier
+                                .width(1.5.dp)
+                                .height(22.dp)
+                                .background(Color.White.copy(alpha = 0.75f))
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(22.dp)
+                                .height(1.5.dp)
+                                .background(Color.White.copy(alpha = 0.75f))
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    Column {
+                        Text(
+                            text = "Meskot",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Serif,
+                            color = Ink,
+                            letterSpacing = (-0.5).sp
+                        )
+                        Text(
+                            text = "· መስኮትህ ራስህ",
+                            fontSize = 9.5.sp,
+                            color = MutedText,
+                            lineHeight = 11.sp
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.width(10.dp))
-
-                Column {
-                    Text(
-                        text = "Meskot",
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Serif,
-                        color = Ink,
-                        letterSpacing = (-0.5).sp
-                    )
-                    Text(
-                        text = "መስኮት · መስኮትህ ለማህበረሰብህ",
-                        fontSize = 10.sp,
-                        color = MutedText,
-                        lineHeight = 12.sp
-                    )
-                }
-            }
-
-            // Right Action Controls
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                // Language toggle [ EN | አማ ]
+                // Language toggle [ EN | አማ ] next to the brand
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
+                        .clip(RoundedCornerShape(18.dp))
                         .background(Paper2)
-                        .border(1.dp, LineBorder, RoundedCornerShape(20.dp))
+                        .border(1.dp, LineBorder, RoundedCornerShape(18.dp))
                         .clickable { onToggleLanguage() }
-                        .padding(horizontal = 4.dp, vertical = 3.dp),
+                        .padding(horizontal = 3.dp, vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(if (currentLanguage == AppLanguage.EN) Ink else Color.Transparent)
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                            .padding(horizontal = 6.dp, vertical = 2.5.dp)
                     ) {
                         Text(
                             text = "EN",
-                            fontSize = 11.sp,
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (currentLanguage == AppLanguage.EN) Color.White else MutedText
                         )
                     }
                     Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(if (currentLanguage == AppLanguage.AM) Ink else Color.Transparent)
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                            .padding(horizontal = 6.dp, vertical = 2.5.dp)
                     ) {
                         Text(
                             text = "አማ",
-                            fontSize = 11.sp,
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (currentLanguage == AppLanguage.AM) Color.White else MutedText
                         )
                     }
                 }
+            }
 
-                if (currentUser != null) {
-                    // Create Post button
-                    IconButton(
-                        onClick = onOpenComposer,
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, LineBorder, RoundedCornerShape(9.dp))
-                            .testTag("create_post_nav_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = "Create Post",
-                            tint = Ink,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+            // Right Action Controls (circled in red): [+] [🔍] [☰] [Log out]
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                // [+] Create Post button
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFF222222), RoundedCornerShape(8.dp))
+                        .clickable { onOpenComposer() }
+                        .testTag("create_post_nav_btn"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Create Post",
+                        tint = Color(0xFF1E1E1E),
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
 
-                    // Search button
-                    IconButton(
-                        onClick = onOpenSearch,
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, LineBorder, RoundedCornerShape(9.dp))
-                            .testTag("search_nav_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = Ink,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                // [🔍] Search button
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFF222222), RoundedCornerShape(8.dp))
+                        .clickable { onOpenSearch() }
+                        .testTag("search_nav_btn"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Search",
+                        tint = Color(0xFF1E1E1E),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
 
-                    // Menu button
-                    IconButton(
-                        onClick = onOpenMenu,
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(MaterialTheme.colorScheme.surface)
-                            .border(1.dp, LineBorder, RoundedCornerShape(9.dp))
-                            .testTag("menu_nav_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Menu,
-                            contentDescription = "Menu",
-                            tint = Ink,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+                // [☰] Menu button
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFF222222), RoundedCornerShape(8.dp))
+                        .clickable { onOpenMenu() }
+                        .testTag("menu_nav_btn"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Menu,
+                        contentDescription = "Menu",
+                        tint = Color(0xFF1E1E1E),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                // [Log out] button
+                Box(
+                    modifier = Modifier
+                        .height(38.dp)
+                        .widthIn(min = 48.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White)
+                        .border(1.dp, Color(0xFF222222), RoundedCornerShape(8.dp))
+                        .clickable { onLogout() }
+                        .padding(horizontal = 6.dp)
+                        .testTag("logout_nav_btn"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (currentLanguage == AppLanguage.AM) "ውጣ" else "Log\nout",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF1E1E1E),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 12.sp
+                    )
                 }
             }
         }
