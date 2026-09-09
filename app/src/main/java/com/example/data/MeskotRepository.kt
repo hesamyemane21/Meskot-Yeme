@@ -1,4 +1,4 @@
-Package com.example.data
+package com.example.data
 
 import android.content.Context
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -172,13 +172,15 @@ accepted.forEach { req ->
 val other = if (req["fromUid"] == myUid) req["toUid"] as? String else req["fromUid"] as? String
 if (other != null) _friends.value = _friends.value + other
 }
-            FirebaseManager.listenToUsers { liveUsers ->
-                val liveMap = liveUsers.associateBy { it.uid }
-                val updated = _users.value.map { liveMap[it.uid] ?: it } +
-                    liveUsers.filterNot { lu -> _users.value.any { it.uid == lu.uid } }
-                _users.value = updated
-            }
-        } catch (e: Exception) {
+}
+
+FirebaseManager.listenToUsers { liveUsers ->
+val liveMap = liveUsers.associateBy { it.uid }
+val updated = _users.value.map { liveMap[it.uid] ?: it } +
+liveUsers.filterNot { lu -> _users.value.any { it.uid == lu.uid } }
+_users.value = updated
+}
+} catch (e: Exception) {
             android.util.Log.e("MeskotRepository", "Could not setup Firebase listeners: ${e.message}")
         }
     }
