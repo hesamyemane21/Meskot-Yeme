@@ -31,6 +31,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -393,48 +394,6 @@ fun MenuScreen(
             }
         }
 
-        // Switch Demo Persona Carousel
-        item {
-            Spacer(modifier = Modifier.height(18.dp))
-            Text(
-                text = "Switch Demo Persona:",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = MutedText
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(allUsers) { u ->
-                    val isSelected = u.uid == currentUser?.uid
-                    Card(
-                        modifier = Modifier
-                            .clickable { viewModel.switchDemoUser(u) },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = if (isSelected) Paper2 else CardBg),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) Gold else LineBorder)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            UserAvatar(photoUrl = u.photoUrl, name = u.displayName, size = 28)
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = u.displayName.split(" ").firstOrNull() ?: u.displayName,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Ink
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
         // Language & Log Out
         item {
             Spacer(modifier = Modifier.height(20.dp))
@@ -518,7 +477,7 @@ fun MenuShortcutCard(
 @Composable
 fun AuthScreen(
     viewModel: MeskotViewModel,
-    allUsers: List<User>,
+    allUsers: List<User> = emptyList(),
     currentLanguage: AppLanguage
 ) {
     var isSignUp by remember { mutableStateOf(false) }
@@ -527,6 +486,7 @@ fun AuthScreen(
     var password by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -599,7 +559,10 @@ fun AuthScreen(
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (!isSignUp) Ink else Color.Transparent)
-                            .clickable { isSignUp = false }
+                            .clickable {
+                                isSignUp = false
+                                errorMessage = null
+                            }
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -616,7 +579,10 @@ fun AuthScreen(
                             .weight(1f)
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (isSignUp) Ink else Color.Transparent)
-                            .clickable { isSignUp = true }
+                            .clickable {
+                                isSignUp = true
+                                errorMessage = null
+                            }
                             .padding(vertical = 8.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -638,7 +604,8 @@ fun AuthScreen(
                         label = { Text(MeskotStrings.get("fullName", currentLanguage)) },
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp),
-                        singleLine = true
+                        singleLine = true,
+                        enabled = !isLoading
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                 }
@@ -649,7 +616,8 @@ fun AuthScreen(
                     label = { Text(MeskotStrings.get("email", currentLanguage)) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
-                    singleLine = true
+                    singleLine = true,
+                    enabled = !isLoading
                 )
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -661,6 +629,7 @@ fun AuthScreen(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(10.dp),
                     singleLine = true,
+                    enabled = !isLoading,
                     visualTransformation = if (isPasswordVisible) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
                         IconButton(onClick = { isPasswordVisible = !isPasswordVisible }) {
@@ -687,53 +656,48 @@ fun AuthScreen(
                             if (fullName.isBlank() || email.isBlank() || password.isBlank()) {
                                 errorMessage = "Please fill in all fields"
                             } else {
-                                val ok = viewModel.signup(fullName, email, password)
-                                if (!ok) errorMessage = "Failed to create account"
+                                isLoading = true
+                                viewModel.signup(fullName, email, password) { ok, err ->
+                                    isLoading = false
+                                    if (!ok) {
+                                        errorMessage = err ?: "Failed to create account"
+                                    }
+                                }
                             }
                         } else {
                             if (email.isBlank() || password.isBlank()) {
                                 errorMessage = "Please enter email and password"
                             } else {
-                                val ok = viewModel.login(email, password)
-                                if (!ok) errorMessage = "Invalid credentials"
+                                isLoading = true
+                                viewModel.login(email, password) { ok, err ->
+                                    isLoading = false
+                                    if (!ok) {
+                                        errorMessage = err ?: "Invalid email or password"
+                                    }
+                                }
                             }
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color.White),
                     shape = RoundedCornerShape(10.dp),
+                    enabled = !isLoading,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
                 ) {
-                    Text(
-                        text = if (isSignUp) MeskotStrings.get("createAccount", currentLanguage) else MeskotStrings.get("signIn", currentLanguage),
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(20.dp))
-
-        // Demo Account Fast Access
-        Text(
-            text = "⚡ Instant Demo Sign-In:",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            color = MutedText
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(allUsers) { user ->
-                OutlinedButton(
-                    onClick = { viewModel.switchDemoUser(user) },
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(text = user.displayName.split(" ").firstOrNull() ?: user.displayName, fontSize = 11.sp, color = Ink)
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text(
+                            text = if (isSignUp) MeskotStrings.get("createAccount", currentLanguage) else MeskotStrings.get("signIn", currentLanguage),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                    }
                 }
             }
         }

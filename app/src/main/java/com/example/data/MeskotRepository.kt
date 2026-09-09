@@ -16,77 +16,28 @@ class MeskotRepository(private val context: Context) {
         _currentLanguage.value = lang
     }
 
-    // Demo / Default Users
-    val demoUsers = listOf(
-        User(
-            uid = "user_sara",
-            displayName = "Sara Tekle",
-            email = "sara@meskot.et",
-            bio = "Product Designer & Habesha Art enthusiast · Addis Ababa 🇪🇹",
-            photoUrl = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
-            isAdmin = true,
-            createdAt = System.currentTimeMillis() - 86400000L * 90
-        ),
-        User(
-            uid = "user_dawit",
-            displayName = "Dawit Bekele",
-            email = "dawit@meskot.et",
-            bio = "Software Engineer & Coffee lover ☕️ · Bole, Addis",
-            photoUrl = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
-            isAdmin = false,
-            createdAt = System.currentTimeMillis() - 86400000L * 60
-        ),
-        User(
-            uid = "user_helen",
-            displayName = "Helen Assefa",
-            email = "helen@meskot.et",
-            bio = "Photographer capturing Ethiopian heritage and daily moments 📸",
-            photoUrl = "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80",
-            isAdmin = false,
-            createdAt = System.currentTimeMillis() - 86400000L * 45
-        ),
-        User(
-            uid = "user_yohannes",
-            displayName = "Yohannes Haile",
-            email = "yohannes@meskot.et",
-            bio = "Cultural historian studying Ge'ez literature and Axumite art 📜",
-            photoUrl = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80",
-            isAdmin = false,
-            createdAt = System.currentTimeMillis() - 86400000L * 30
-        ),
-        User(
-            uid = "user_eden",
-            displayName = "Eden Girma",
-            email = "eden@meskot.et",
-            bio = "Culinary artist celebrating Ethiopian dishes & spice blends 🌶️",
-            photoUrl = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80",
-            isAdmin = false,
-            createdAt = System.currentTimeMillis() - 86400000L * 20
-        )
-    )
-
-    // Current logged-in user (defaults to Sara Tekle for immediate rich interactivity)
-    private val _currentUser = MutableStateFlow<User?>(demoUsers[0])
+    // Current logged-in user (null until logged in via Firebase)
+    private val _currentUser = MutableStateFlow<User?>(null)
     val currentUser: StateFlow<User?> = _currentUser.asStateFlow()
 
-    // Users list
-    private val _users = MutableStateFlow<List<User>>(demoUsers)
+    // Users list (populated directly from Firebase Firestore)
+    private val _users = MutableStateFlow<List<User>>(emptyList())
     val users: StateFlow<List<User>> = _users.asStateFlow()
 
-    // Posts list
-    private val _posts = MutableStateFlow<List<Post>>(createInitialPosts())
+    // Posts list (populated directly from Firebase Firestore)
+    private val _posts = MutableStateFlow<List<Post>>(emptyList())
     val posts: StateFlow<List<Post>> = _posts.asStateFlow()
 
     // Comments map: postId -> List<Comment>
-    private val _comments = MutableStateFlow<Map<String, List<Comment>>>(createInitialComments())
+    private val _comments = MutableStateFlow<Map<String, List<Comment>>>(emptyMap())
     val comments: StateFlow<Map<String, List<Comment>>> = _comments.asStateFlow()
 
-    // Friendships: Set of (fromUid, toUid)
-    private val _friends = MutableStateFlow<Set<String>>(setOf("user_dawit", "user_helen"))
+    // Friendships: Set of friend uids
+    private val _friends = MutableStateFlow<Set<String>>(emptySet())
     val friends: StateFlow<Set<String>> = _friends.asStateFlow()
 
     // Pending incoming friend requests
-    private val _incomingRequests = MutableStateFlow<List<User>>(listOf(demoUsers[3])) // Yohannes
+    private val _incomingRequests = MutableStateFlow<List<User>>(emptyList())
     val incomingRequests: StateFlow<List<User>> = _incomingRequests.asStateFlow()
 
     // Pending outgoing friend requests
@@ -98,147 +49,212 @@ class MeskotRepository(private val context: Context) {
     val groups: StateFlow<List<GroupItem>> = _groups.asStateFlow()
 
     // Group posts map: groupId -> List<Post>
-    private val _groupPosts = MutableStateFlow<Map<String, List<Post>>>(createInitialGroupPosts())
+    private val _groupPosts = MutableStateFlow<Map<String, List<Post>>>(emptyMap())
     val groupPosts: StateFlow<Map<String, List<Post>>> = _groupPosts.asStateFlow()
 
     // Albums
-    private val _albums = MutableStateFlow<List<AlbumItem>>(createInitialAlbums())
+    private val _albums = MutableStateFlow<List<AlbumItem>>(emptyList())
     val albums: StateFlow<List<AlbumItem>> = _albums.asStateFlow()
 
     // Conversations map: otherUid -> List<ChatMessage>
-    private val _conversations = MutableStateFlow<Map<String, List<ChatMessage>>>(createInitialChatMessages())
+    private val _conversations = MutableStateFlow<Map<String, List<ChatMessage>>>(emptyMap())
     val conversations: StateFlow<Map<String, List<ChatMessage>>> = _conversations.asStateFlow()
 
     // Notifications
-    private val _notifications = MutableStateFlow<List<NotificationItem>>(createInitialNotifications())
+    private val _notifications = MutableStateFlow<List<NotificationItem>>(emptyList())
     val notifications: StateFlow<List<NotificationItem>> = _notifications.asStateFlow()
 
     // Saved post IDs
-    private val _savedPostIds = MutableStateFlow<Set<String>>(setOf("post_1"))
+    private val _savedPostIds = MutableStateFlow<Set<String>>(emptySet())
     val savedPostIds: StateFlow<Set<String>> = _savedPostIds.asStateFlow()
 
     // Hidden post IDs
     private val _hiddenPostIds = MutableStateFlow<Set<String>>(emptySet())
     val hiddenPostIds: StateFlow<Set<String>> = _hiddenPostIds.asStateFlow()
 
+    private var notifListenerRegistration: com.google.firebase.firestore.ListenerRegistration? = null
+
     init {
         FirebaseManager.initialize(context)
+        val fbAuthUser = FirebaseManager.getCurrentFirebaseUser()
+        if (fbAuthUser != null) {
+            val user = User(
+                uid = fbAuthUser.uid,
+                displayName = fbAuthUser.displayName ?: fbAuthUser.email?.substringBefore("@") ?: "User",
+                email = fbAuthUser.email ?: "",
+                photoUrl = fbAuthUser.photoUrl?.toString() ?: ""
+            )
+            _currentUser.value = user
+            setupUserSpecificListeners(user.uid)
+        }
         setupFirebaseListeners()
+    }
+
+    private fun setupUserSpecificListeners(uid: String) {
+        notifListenerRegistration?.remove()
+        notifListenerRegistration = FirebaseManager.listenToNotifications(uid) { liveNotifs ->
+            val liveIds = liveNotifs.map { it.id }.toSet()
+            val remainingLocal = _notifications.value.filterNot { it.id in liveIds }
+            _notifications.value = (liveNotifs + remainingLocal).sortedByDescending { it.createdAt }
+        }
     }
 
     private fun setupFirebaseListeners() {
         try {
             FirebaseManager.listenToPosts { livePosts ->
-                val liveIds = livePosts.map { it.id }.toSet()
-                val remainingLocal = _posts.value.filterNot { it.id in liveIds }
-                _posts.value = (livePosts + remainingLocal).sortedByDescending { it.createdAt }
+                _posts.value = livePosts
             }
 
             FirebaseManager.listenToComments { liveComments ->
-                val current = _comments.value.toMutableMap()
-                liveComments.forEach { (postId, comments) ->
-                    current[postId] = comments
-                }
-                _comments.value = current
+                _comments.value = liveComments
             }
 
-FirebaseManager.listenToMessages { liveMessages ->
-val myUid = _currentUser.value?.uid ?: return@listenToMessages
-val merged = _conversations.value.toMutableMap()
-liveMessages
-.filter { it.fromUid == myUid || it.convoId == myUid }
-.groupBy { if (it.fromUid == myUid) it.convoId else it.fromUid }
-.forEach { (otherUid, msgs) ->
-val existingIds = (merged[otherUid] ?: emptyList()).map { it.id }.toSet()
-val newOnes = msgs.filterNot { it.id in existingIds }
-if (newOnes.isNotEmpty()) {
-merged[otherUid] = ((merged[otherUid] ?: emptyList()) + newOnes).sortedBy { it.createdAt }
-}
-}
-_conversations.value = merged
-}
+            FirebaseManager.listenToUsers { liveUsers ->
+                _users.value = liveUsers
+                val curUid = _currentUser.value?.uid ?: FirebaseManager.getCurrentFirebaseUser()?.uid
+                if (curUid != null) {
+                    val matching = liveUsers.find { it.uid == curUid }
+                    if (matching != null) {
+                        _currentUser.value = matching
+                        setupUserSpecificListeners(matching.uid)
+                    }
+                }
+            }
 
-FirebaseManager.listenToFriendRequests { requests ->
-val myUid = _currentUser.value?.uid ?: return@listenToFriendRequests
-val incoming = requests.filter { it["toUid"] == myUid && it["status"] == "pending" }
-.mapNotNull { req -> _users.value.find { it.uid == req["fromUid"] } }
-val outgoing = requests.filter { it["fromUid"] == myUid && it["status"] == "pending" }
-.mapNotNull { it["toUid"] as? String }.toSet()
-_incomingRequests.value = incoming
-_outgoingRequests.value = outgoing
+            // Real-time Messages synchronization
+            FirebaseManager.listenToMessages { liveMessages ->
+                val currentMap = _conversations.value.toMutableMap()
+                val currentUid = _currentUser.value?.uid
+                liveMessages.forEach { msg ->
+                    // Index by convoId
+                    if (msg.convoId.isNotBlank()) {
+                        val existing = currentMap[msg.convoId] ?: emptyList()
+                        if (existing.none { it.id == msg.id }) {
+                            currentMap[msg.convoId] = (existing + msg).sortedBy { it.createdAt }
+                        }
+                    }
+                    // Index by recipient for sender
+                    if (msg.toUid.isNotBlank()) {
+                        val existingForTo = currentMap[msg.toUid] ?: emptyList()
+                        if (existingForTo.none { it.id == msg.id }) {
+                            currentMap[msg.toUid] = (existingForTo + msg).sortedBy { it.createdAt }
+                        }
+                    }
+                    // Index by sender for recipient
+                    if (msg.fromUid.isNotBlank()) {
+                        val existingForFrom = currentMap[msg.fromUid] ?: emptyList()
+                        if (existingForFrom.none { it.id == msg.id }) {
+                            currentMap[msg.fromUid] = (existingForFrom + msg).sortedBy { it.createdAt }
+                        }
+                    }
+                }
+                _conversations.value = currentMap
+            }
 
-val accepted = requests.filter { it["status"] == "accepted" && (it["fromUid"] == myUid || it["toUid"] == myUid) }
-accepted.forEach { req ->
-val other = if (req["fromUid"] == myUid) req["toUid"] as? String else req["fromUid"] as? String
-if (other != null) _friends.value = _friends.value + other
-}
-}
+            // Real-time Friend Requests synchronization
+            FirebaseManager.listenToFriendRequests { liveRequests ->
+                val currentUid = _currentUser.value?.uid
+                if (currentUid != null) {
+                    // Incoming pending requests
+                    val incoming = liveRequests.filter { it.toUid == currentUid && it.status == "pending" }
+                    val incomingUserList = incoming.map { req ->
+                        _users.value.find { it.uid == req.fromUid } ?: User(
+                            uid = req.fromUid,
+                            displayName = req.fromName,
+                            photoUrl = req.fromPhoto,
+                            bio = "Meskot member"
+                        )
+                    }
+                    _incomingRequests.value = incomingUserList
 
-FirebaseManager.listenToUsers { liveUsers ->
-val liveMap = liveUsers.associateBy { it.uid }
-val updated = _users.value.map { liveMap[it.uid] ?: it } +
-liveUsers.filterNot { lu -> _users.value.any { it.uid == lu.uid } }
-_users.value = updated
-}
-} catch (e: Exception) {
+                    // Outgoing pending requests
+                    val outgoing = liveRequests.filter { it.fromUid == currentUid && it.status == "pending" }
+                    _outgoingRequests.value = outgoing.map { it.toUid }.toSet()
+
+                    // Newly accepted requests involving the user
+                    val accepted = liveRequests.filter {
+                        (it.fromUid == currentUid || it.toUid == currentUid) && it.status == "accepted"
+                    }
+                    val acceptedUids = accepted.map { if (it.fromUid == currentUid) it.toUid else it.fromUid }
+                    if (acceptedUids.isNotEmpty()) {
+                        _friends.value = _friends.value + acceptedUids
+                    }
+                }
+            }
+
+            // Real-time Friendships synchronization
+            FirebaseManager.listenToFriendships { liveFriendships ->
+                val currentUid = _currentUser.value?.uid
+                if (currentUid != null) {
+                    val friendsFromPairs = liveFriendships.mapNotNull { (u1, u2) ->
+                        when (currentUid) {
+                            u1 -> u2
+                            u2 -> u1
+                            else -> null
+                        }
+                    }
+                    if (friendsFromPairs.isNotEmpty()) {
+                        _friends.value = _friends.value + friendsFromPairs
+                    }
+                }
+            }
+
+            // Attach user-specific notifications listener if logged in
+            _currentUser.value?.uid?.let { setupUserSpecificListeners(it) }
+
+        } catch (e: Exception) {
             android.util.Log.e("MeskotRepository", "Could not setup Firebase listeners: ${e.message}")
         }
     }
 
     // AUTH METHODS
-    fun login(email: String, pass: String): Boolean {
-        val found = _users.value.find { it.email.equals(email.trim(), ignoreCase = true) }
-        if (found != null) {
-            _currentUser.value = found
-            FirebaseManager.signInWithEmail(email, pass, onSuccess = { fbUser ->
+    fun login(email: String, pass: String, onResult: ((Boolean, String?) -> Unit)? = null): Boolean {
+        FirebaseManager.signInWithEmail(
+            email = email,
+            pass = pass,
+            onSuccess = { fbUser ->
                 _currentUser.value = fbUser
-            }, onFailure = {})
-            return true
-        }
-        // Attempt Firebase sign in
-        FirebaseManager.signInWithEmail(email, pass, onSuccess = { fbUser ->
-            _currentUser.value = fbUser
-            if (_users.value.none { it.uid == fbUser.uid }) {
-                _users.value = _users.value + fbUser
+                setupUserSpecificListeners(fbUser.uid)
+                if (_users.value.none { it.uid == fbUser.uid }) {
+                    _users.value = _users.value + fbUser
+                }
+                onResult?.invoke(true, null)
+            },
+            onFailure = { err ->
+                onResult?.invoke(false, err)
             }
-        }, onFailure = {})
-
-        val newUser = User(
-            uid = "user_" + UUID.randomUUID().toString().take(6),
-            displayName = email.substringBefore("@").replaceFirstChar { it.uppercase() },
-            email = email.trim(),
-            bio = "Member of Meskot community"
         )
-        _users.value = _users.value + newUser
-        _currentUser.value = newUser
-        FirebaseManager.saveUser(newUser)
         return true
     }
 
-    fun signup(fullName: String, email: String, pass: String): Boolean {
-        val newUser = User(
-            uid = "user_" + UUID.randomUUID().toString().take(6),
-            displayName = fullName.trim(),
-            email = email.trim(),
-            bio = "New member of Meskot community"
+    fun signup(fullName: String, email: String, pass: String, onResult: ((Boolean, String?) -> Unit)? = null): Boolean {
+        FirebaseManager.signUpWithEmail(
+            fullName = fullName,
+            email = email,
+            pass = pass,
+            onSuccess = { fbUser ->
+                _currentUser.value = fbUser
+                setupUserSpecificListeners(fbUser.uid)
+                if (_users.value.none { it.uid == fbUser.uid }) {
+                    _users.value = _users.value + fbUser
+                }
+                onResult?.invoke(true, null)
+            },
+            onFailure = { err ->
+                onResult?.invoke(false, err)
+            }
         )
-        _users.value = _users.value + newUser
-        _currentUser.value = newUser
-
-        FirebaseManager.signUpWithEmail(fullName, email, pass, onSuccess = { fbUser ->
-            _currentUser.value = fbUser
-            _users.value = _users.value.map { if (it.uid == newUser.uid) fbUser else it }
-        }, onFailure = {
-            FirebaseManager.saveUser(newUser)
-        })
         return true
     }
 
     fun switchUser(user: User) {
         _currentUser.value = user
+        setupUserSpecificListeners(user.uid)
     }
 
     fun logout() {
+        notifListenerRegistration?.remove()
+        notifListenerRegistration = null
         FirebaseManager.signOut()
         _currentUser.value = null
     }
@@ -455,49 +471,117 @@ _users.value = updated
 
     // FRIENDS
     fun sendFriendRequest(toUid: String) {
-val user = _currentUser.value ?: return
-FirebaseManager.sendFriendRequest(user.uid, toUid)
-}
+        val user = _currentUser.value ?: return
+        _outgoingRequests.value = _outgoingRequests.value + toUid
 
-fun cancelFriendRequest(toUid: String) {
-val user = _currentUser.value ?: return
-FirebaseManager.respondToFriendRequest(user.uid, toUid, accept = false)
-}
+        val req = FriendRequest(
+            id = "${user.uid}_$toUid",
+            fromUid = user.uid,
+            fromName = user.displayName,
+            fromPhoto = user.photoUrl,
+            toUid = toUid,
+            status = "pending",
+            createdAt = System.currentTimeMillis()
+        )
+        FirebaseManager.sendFriendRequest(req)
 
-fun acceptFriendRequest(fromUid: String) {
-val user = _currentUser.value ?: return
-FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = true)
-}
+        val notif = NotificationItem(
+            id = "notif_" + System.currentTimeMillis(),
+            fromUid = user.uid,
+            fromName = user.displayName,
+            fromPhoto = user.photoUrl,
+            toUid = toUid,
+            type = "friend_request",
+            text = "${user.displayName} sent you a friend request",
+            targetId = user.uid,
+            createdAt = System.currentTimeMillis()
+        )
+        FirebaseManager.sendNotification(notif)
+    }
 
-fun declineFriendRequest(fromUid: String) {
-val user = _currentUser.value ?: return
-FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = false)
-}
+    fun cancelFriendRequest(toUid: String) {
+        val user = _currentUser.value ?: return
+        _outgoingRequests.value = _outgoingRequests.value - toUid
+        val reqId = "${user.uid}_$toUid"
+        FirebaseManager.deleteFriendRequest(reqId)
+    }
+
+    fun acceptFriendRequest(fromUid: String) {
+        val user = _currentUser.value ?: return
+        _friends.value = _friends.value + fromUid
+        _incomingRequests.value = _incomingRequests.value.filterNot { it.uid == fromUid }
+
+        val reqId = "${fromUid}_${user.uid}"
+        FirebaseManager.updateFriendRequestStatus(reqId, "accepted")
+        FirebaseManager.addFriendship(user.uid, fromUid)
+
+        val notif = NotificationItem(
+            id = "notif_" + System.currentTimeMillis(),
+            fromUid = user.uid,
+            fromName = user.displayName,
+            fromPhoto = user.photoUrl,
+            toUid = fromUid,
+            type = "friend_accept",
+            text = "${user.displayName} accepted your friend request",
+            targetId = user.uid,
+            createdAt = System.currentTimeMillis()
+        )
+        FirebaseManager.sendNotification(notif)
+    }
+
+    fun declineFriendRequest(fromUid: String) {
+        val user = _currentUser.value ?: return
+        _incomingRequests.value = _incomingRequests.value.filterNot { it.uid == fromUid }
+        val reqId = "${fromUid}_${user.uid}"
+        FirebaseManager.updateFriendRequestStatus(reqId, "declined")
+    }
+
+    fun unfriend(uid: String) {
+        val user = _currentUser.value ?: return
+        _friends.value = _friends.value - uid
+        FirebaseManager.removeFriendship(user.uid, uid)
+    }
 
     // MESSAGES & CHAT
     fun getMessages(otherUid: String): List<ChatMessage> {
-        return _conversations.value[otherUid] ?: emptyList()
+        val user = _currentUser.value
+        val fromDirectKey = _conversations.value[otherUid] ?: emptyList()
+        if (user != null) {
+            val convoKey = if (user.uid < otherUid) "${user.uid}_$otherUid" else "${otherUid}_${user.uid}"
+            val fromConvoKey = _conversations.value[convoKey] ?: emptyList()
+            val combined = (fromDirectKey + fromConvoKey).distinctBy { it.id }.sortedBy { it.createdAt }
+            if (combined.isNotEmpty()) return combined
+        }
+        return fromDirectKey
     }
 
     fun sendMessage(otherUid: String, text: String) {
         val user = _currentUser.value ?: return
+        val convoId = if (user.uid < otherUid) "${user.uid}_$otherUid" else "${otherUid}_${user.uid}"
         val newMsg = ChatMessage(
             id = "msg_" + System.currentTimeMillis(),
-            convoId = otherUid,
+            convoId = convoId,
             fromUid = user.uid,
+            toUid = otherUid,
             text = text,
             createdAt = System.currentTimeMillis()
         )
         val currentMsgs = _conversations.value[otherUid] ?: emptyList()
         _conversations.value = _conversations.value + (otherUid to (currentMsgs + newMsg))
         FirebaseManager.sendMessage(newMsg)
-        addNotification(
+
+        val notif = NotificationItem(
+            id = "notif_" + System.currentTimeMillis(),
             fromUid = user.uid,
             fromName = user.displayName,
             fromPhoto = user.photoUrl,
+            toUid = otherUid,
             type = "message",
-            targetId = otherUid
+            text = "${user.displayName}: $text",
+            targetId = user.uid,
+            createdAt = System.currentTimeMillis()
         )
+        FirebaseManager.sendNotification(notif)
     }
 
     fun logCall(otherUid: String, callType: String, callStatus: String, durationSec: Int) {
@@ -658,108 +742,10 @@ FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = false)
         _groups.value = _groups.value.filterNot { it.id == groupId }
     }
 
-    // INITIAL SAMPLE DATA
-    private fun createInitialPosts(): List<Post> {
-        val now = System.currentTimeMillis()
-        return listOf(
-            Post(
-                id = "post_1",
-                uid = "user_sara",
-                authorName = "Sara Tekle",
-                authorPhoto = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
-                text = "እንኳን ወደ መስኮት (Meskot) በደህና መጣችሁ! 🌿✨\n\nMeskot is designed as our authentic community window—connecting Ethiopian and Habesha creatives, thinkers, and friends worldwide. Share your thoughts, art, memories, and stories with your circle!",
-                mediaUrls = listOf("https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?w=800&auto=format&fit=crop&q=80"),
-                reactions = mapOf("user_dawit" to "love", "user_helen" to "like", "user_yohannes" to "love"),
-                commentCount = 3,
-                tipTotal = 50.0,
-                createdAt = now - 3600000L * 2
-            ),
-            Post(
-                id = "post_2",
-                uid = "user_eden",
-                authorName = "Eden Girma",
-                authorPhoto = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80",
-                text = "የእሁድ የቡና ስነ-ስርዓት ከቤተሰብ ጋር! ☕️ Traditional Ethiopian Jebena Buna roasted fresh with frankincense aroma filling the room. Buna tetu!",
-                mediaUrls = listOf("https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=800&auto=format&fit=crop&q=80"),
-                reactions = mapOf("user_sara" to "love", "user_dawit" to "like"),
-                commentCount = 2,
-                tipTotal = 25.0,
-                createdAt = now - 3600000L * 5
-            ),
-            Post(
-                id = "post_3",
-                uid = "user_dawit",
-                authorName = "Dawit Bekele",
-                authorPhoto = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
-                text = "Building technology rooted in African identity is the most exciting frontier of our generation. 🚀",
-                bgColorIndex = 1, // Red & Gold gradient card
-                reactions = mapOf("user_sara" to "like", "user_yohannes" to "wow"),
-                commentCount = 1,
-                createdAt = now - 3600000L * 10
-            ),
-            Post(
-                id = "post_4",
-                uid = "user_yohannes",
-                authorName = "Yohannes Haile",
-                authorPhoto = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80",
-                text = "Exploring the architectural geometry of Bet Giyorgis in Lalibela. Carved out of monolithic red volcanic rock in the 12th century—a testament to architectural mastery and spiritual devotion.",
-                mediaUrls = listOf("https://images.unsplash.com/photo-1578922746465-3a80a228f223?w=800&auto=format&fit=crop&q=80"),
-                reactions = mapOf("user_helen" to "love", "user_sara" to "like", "user_eden" to "wow"),
-                commentCount = 2,
-                tipTotal = 100.0,
-                createdAt = now - 86400000L
-            )
-        )
-    }
+    // INITIAL DATA GENERATORS
+    private fun createInitialPosts(): List<Post> = emptyList()
 
-    private fun createInitialComments(): Map<String, List<Comment>> {
-        val now = System.currentTimeMillis()
-        return mapOf(
-            "post_1" to listOf(
-                Comment(
-                    id = "c_1",
-                    postId = "post_1",
-                    uid = "user_dawit",
-                    authorName = "Dawit Bekele",
-                    authorPhoto = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
-                    text = "እንኳን ደስ አላችሁ! Proud to see a digital space tailored specifically for our community.",
-                    likes = mapOf("user_sara" to true),
-                    createdAt = now - 3600000L
-                ),
-                Comment(
-                    id = "c_2",
-                    postId = "post_1",
-                    uid = "user_helen",
-                    authorName = "Helen Assefa",
-                    authorPhoto = "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80",
-                    text = "The bilingual Amharic and English interface looks so elegant! Love the lattice window motif.",
-                    likes = mapOf("user_sara" to true, "user_dawit" to true),
-                    createdAt = now - 1800000L
-                ),
-                Comment(
-                    id = "c_3",
-                    postId = "post_1",
-                    uid = "user_sara",
-                    authorName = "Sara Tekle",
-                    authorPhoto = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
-                    text = "Thank you everyone! Looking forward to hearing all of your voices here. ❤️",
-                    parentId = "c_2",
-                    createdAt = now - 900000L
-                )
-            ),
-            "post_2" to listOf(
-                Comment(
-                    id = "c_4",
-                    postId = "post_2",
-                    uid = "user_sara",
-                    authorName = "Sara Tekle",
-                    authorPhoto = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
-                    text = "Nothing compares to Sunday buna! Especially with fresh popcorn (fendisha). ☕️🍿",
-                    createdAt = now - 7200000L
-                )
-            )
-        )
-    }
+    private fun createInitialComments(): Map<String, List<Comment>> = emptyMap()
 
     private fun createInitialGroups(): List<GroupItem> {
         return listOf(
@@ -767,7 +753,7 @@ FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = false)
                 id = "group_tech",
                 name = "Addis Tech & Startups (አዲስ ቴክ)",
                 description = "Ethiopian founders, developers, engineers, and digital creators building products for Africa and the diaspora.",
-                createdBy = "user_dawit",
+                createdBy = "meskot",
                 memberCount = 142,
                 isJoined = true,
                 coverColorHex = "#2A4838"
@@ -776,7 +762,7 @@ FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = false)
                 id = "group_culture",
                 name = "Habesha Food & Culinary Arts (የባህል ምግብ)",
                 description = "Sharing traditional recipes, spice blends (berbere, mitmita), injera techniques, and diaspora cooking secrets.",
-                createdBy = "user_eden",
+                createdBy = "meskot",
                 memberCount = 89,
                 isJoined = true,
                 coverColorHex = "#8C2F39"
@@ -785,7 +771,7 @@ FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = false)
                 id = "group_art",
                 name = "Ethiopian Photography & Travel",
                 description = "Visual journey across Simien Mountains, Danakil Depression, Omo Valley, Harar Jugol, and modern Addis nightlife.",
-                createdBy = "user_helen",
+                createdBy = "meskot",
                 memberCount = 64,
                 isJoined = false,
                 coverColorHex = "#B8863A"
@@ -794,7 +780,7 @@ FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = false)
                 id = "group_literature",
                 name = "Ge'ez & Ethiopian Literature",
                 description = "Appreciating classic Ethiopian manuscripts, poetry (Qene), novels, and contemporary Habesha authors.",
-                createdBy = "user_yohannes",
+                createdBy = "meskot",
                 memberCount = 38,
                 isJoined = false,
                 coverColorHex = "#4A3B5C"
@@ -802,146 +788,11 @@ FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = false)
         )
     }
 
-    private fun createInitialGroupPosts(): Map<String, List<Post>> {
-        val now = System.currentTimeMillis()
-        return mapOf(
-            "group_tech" to listOf(
-                Post(
-                    id = "gp_1",
-                    uid = "user_dawit",
-                    authorName = "Dawit Bekele",
-                    authorPhoto = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
-                    text = "Excited to announce our upcoming Addis Mobile Dev meetup! We'll be discussing local offline-first architecture and Kotlin Multiplatform.",
-                    createdAt = now - 3600000L * 4
-                )
-            ),
-            "group_culture" to listOf(
-                Post(
-                    id = "gp_2",
-                    uid = "user_eden",
-                    authorName = "Eden Girma",
-                    authorPhoto = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=150&auto=format&fit=crop&q=80",
-                    text = "Secret to a rich Doro Wat: cooking the red onions down for at least 45 minutes until caramelized before adding the niter kibbeh and berbere! 🍗",
-                    createdAt = now - 3600000L * 8
-                )
-            )
-        )
-    }
+    private fun createInitialGroupPosts(): Map<String, List<Post>> = emptyMap()
 
-    private fun createInitialAlbums(): List<AlbumItem> {
-        return listOf(
-            AlbumItem(
-                id = "album_1",
-                uid = "user_sara",
-                title = "Addis Skylines & Entoto Hills",
-                count = 4,
-                coverUrl = "https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?w=500&auto=format&fit=crop&q=80",
-                photos = listOf(
-                    "https://images.unsplash.com/photo-1547471080-7cc2caa01a7e?w=800&auto=format&fit=crop&q=80",
-                    "https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?w=800&auto=format&fit=crop&q=80",
-                    "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=800&auto=format&fit=crop&q=80",
-                    "https://images.unsplash.com/photo-1448375240586-882707db888b?w=800&auto=format&fit=crop&q=80"
-                )
-            ),
-            AlbumItem(
-                id = "album_2",
-                uid = "user_sara",
-                title = "Ethiopian Coffee Ceremonies",
-                count = 3,
-                coverUrl = "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=500&auto=format&fit=crop&q=80",
-                photos = listOf(
-                    "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?w=800&auto=format&fit=crop&q=80",
-                    "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&auto=format&fit=crop&q=80",
-                    "https://images.unsplash.com/photo-1447933601403-0c6688de566e?w=800&auto=format&fit=crop&q=80"
-                )
-            )
-        )
-    }
+    private fun createInitialAlbums(): List<AlbumItem> = emptyList()
 
-    private fun createInitialChatMessages(): Map<String, List<ChatMessage>> {
-        val now = System.currentTimeMillis()
-        return mapOf(
-            "user_dawit" to listOf(
-                ChatMessage(
-                    id = "m_1",
-                    convoId = "user_dawit",
-                    fromUid = "user_dawit",
-                    text = "Selam Sara! How is the new Meskot design coming along?",
-                    createdAt = now - 3600000L * 3
-                ),
-                ChatMessage(
-                    id = "m_2",
-                    convoId = "user_dawit",
-                    fromUid = "user_sara",
-                    text = "Selam Dawit! It's looking really sharp. The Amharic typography and lattice window identity are integrated beautifully.",
-                    createdAt = now - 3600000L * 2
-                ),
-                ChatMessage(
-                    id = "m_3",
-                    convoId = "user_dawit",
-                    fromUid = "user_dawit",
-                    text = "Fantastic! Let's connect on a quick call later today.",
-                    createdAt = now - 3600000L
-                ),
-                ChatMessage(
-                    id = "m_4",
-                    convoId = "user_dawit",
-                    fromUid = "user_dawit",
-                    text = "Audio call",
-                    isCallLog = true,
-                    callType = "audio",
-                    callStatus = "completed",
-                    callDurationSec = 145,
-                    createdAt = now - 1800000L
-                )
-            ),
-            "user_helen" to listOf(
-                ChatMessage(
-                    id = "m_5",
-                    convoId = "user_helen",
-                    fromUid = "user_helen",
-                    text = "Hi Sara! Loved your latest post on the heritage photography.",
-                    createdAt = now - 86400000L
-                )
-            )
-        )
-    }
+    private fun createInitialChatMessages(): Map<String, List<ChatMessage>> = emptyMap()
 
-    private fun createInitialNotifications(): List<NotificationItem> {
-        val now = System.currentTimeMillis()
-        return listOf(
-            NotificationItem(
-                id = "n_1",
-                fromUid = "user_dawit",
-                fromName = "Dawit Bekele",
-                fromPhoto = "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
-                text = "Dawit Bekele liked your post",
-                type = "like",
-                targetId = "post_1",
-                isRead = false,
-                createdAt = now - 1800000L
-            ),
-            NotificationItem(
-                id = "n_2",
-                fromUid = "user_helen",
-                fromName = "Helen Assefa",
-                fromPhoto = "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80",
-                text = "Helen Assefa commented: 'Amen! Betam yastemiral.'",
-                type = "comment",
-                targetId = "post_1",
-                isRead = false,
-                createdAt = now - 3600000L
-            ),
-            NotificationItem(
-                id = "n_3",
-                fromUid = "user_yohannes",
-                fromName = "Yohannes Haile",
-                fromPhoto = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80",
-                text = "Yohannes Haile sent you a friend request",
-                type = "friend_request",
-                isRead = true,
-                createdAt = now - 86400000L
-            )
-        )
-    }
+    private fun createInitialNotifications(): List<NotificationItem> = emptyList()
 }

@@ -30,7 +30,8 @@ object FirebaseManager {
     const val COL_ALBUMS = "albums"
     const val COL_MESSAGES = "messages"
     const val COL_NOTIFICATIONS = "notifications"
-    const val COL_FRIEND_REQUESTS = "friendRequests"
+    const val COL_FRIEND_REQUESTS = "friend_requests"
+    const val COL_FRIENDSHIPS = "friendships"
 
     fun initialize(context: Context) {
         if (isInitialized) return
@@ -305,9 +306,7 @@ object FirebaseManager {
                         val users = snapshot.documents.mapNotNull { doc ->
                             doc.data?.let { parseUser(doc.id, it) }
                         }
-                        if (users.isNotEmpty()) {
-                            onUsersUpdated(users)
-                        }
+                        onUsersUpdated(users)
                     }
                 }
         } catch (e: Exception) {
@@ -357,29 +356,128 @@ object FirebaseManager {
     }
 
     // FIRESTORE: FRIEND REQUESTS
-    fun sendFriendRequest(fromUid: String, toUid: String) {
+    fun sendFriendRequest(req: FriendRequest) {
         val db = firestore ?: return
-        val id = "${fromUid}_$toUid"
-        val map = mapOf(
-            "id" to id, "fromUid" to fromUid, "toUid" to toUid,
-            "status" to "pending", "createdAt" to System.currentTimeMillis()
-        )
-        db.collection(COL_FRIEND_REQUESTS).document(id).set(map, SetOptions.merge())
+        val map = friendRequestToMap(req)
+        db.collection(COL_FRIEND_REQUESTS).document(req.id).set(map, SetOptions.merge())
             .addOnFailureListener { Log.e(TAG, "Failed to send friend request: ${it.message}") }
     }
 
-    fun respondToFriendRequest(fromUid: String, toUid: String, accept: Boolean) {
+    fun updateFriendRequestStatus(reqId: String, status: String) {
         val db = firestore ?: return
-        db.collection(COL_FRIEND_REQUESTS).document("${fromUid}_$toUid")
-            .update("status", if (accept) "accepted" else "declined")
-            .addOnFailureListener { Log.e(TAG, "Failed to respond to friend request: ${it.message}") }
+        db.collection(COL_FRIEND_REQUESTS).document(reqId).update("status", status)
+            .addOnFailureListener { Log.e(TAG, "Failed to update friend request status: ${it.message}") }
     }
 
-    fun listenToFriendRequests(onUpdated: (List<Map<String, Any?>>) -> Unit): ListenerRegistration? {
+    fun deleteFriendRequest(reqId: String) {
+        val db = firestore ?: return
+        db.collection(COL_FRIEND_REQUESTS).document(reqId).delete()
+            .addOnFailureListener { Log.e(TAG, "Failed to delete friend request: ${it.message}") }
+    }
+
+    fun listenToFriendRequests(onRequestsUpdated: (List<FriendRequest>) -> Unit): ListenerRegistration? {
         val db = firestore ?: return null
-        return db.collection(COL_FRIEND_REQUESTS).addSnapshotListener { snapshot, error ->
-            if (error != null) { Log.e(TAG, "Error listening to friend requests: ${error.message}"); return@addSnapshotListener }
-            snapshot?.let { onUpdated(it.documents.mapNotNull { d -> d.data }) }
+        return try {
+            db.collection(COL_FRIEND_REQUESTS)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e(TAG, "Error listening to friend requests: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val reqs = snapshot.documents.mapNotNull { doc ->
+                            doc.data?.let { parseFriendRequest(doc.id, it) }
+                        }
+                        onRequestsUpdated(reqs)
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to attach friend requests listener: ${e.message}")
+            null
+        }
+    }
+
+    // FIRESTORE: FRIENDSHIPS
+    fun addFriendship(uid1: String, uid2: String) {
+        val db = firestore ?: return
+        val docId = if (uid1 < uid2) "${uid1}_$uid2" else "${uid2}_$uid1"
+        val map = mapOf(
+            "users" to listOf(uid1, uid2),
+            "uid1" to if (uid1 < uid2) uid1 else uid2,
+            "uid2" to if (uid1 < uid2) uid2 else uid1,
+            "createdAt" to System.currentTimeMillis()
+        )
+        db.collection(COL_FRIENDSHIPS).document(docId).set(map, SetOptions.merge())
+            .addOnFailureListener { Log.e(TAG, "Failed to record friendship: ${it.message}") }
+    }
+
+    fun removeFriendship(uid1: String, uid2: String) {
+        val db = firestore ?: return
+        val docId = if (uid1 < uid2) "${uid1}_$uid2" else "${uid2}_$uid1"
+        db.collection(COL_FRIENDSHIPS).document(docId).delete()
+            .addOnFailureListener { Log.e(TAG, "Failed to remove friendship: ${it.message}") }
+    }
+
+    fun listenToFriendships(onFriendshipsUpdated: (List<Pair<String, String>>) -> Unit): ListenerRegistration? {
+        val db = firestore ?: return null
+        return try {
+            db.collection(COL_FRIENDSHIPS)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e(TAG, "Error listening to friendships: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val pairs = snapshot.documents.mapNotNull { doc ->
+                            val d = doc.data ?: return@mapNotNull null
+                            val users = (d["users"] as? List<*>)?.filterIsInstance<String>()
+                            if (users != null && users.size >= 2) {
+                                users[0] to users[1]
+                            } else null
+                        }
+                        onFriendshipsUpdated(pairs)
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to attach friendships listener: ${e.message}")
+            null
+        }
+    }
+
+    // FIRESTORE: NOTIFICATIONS
+    fun sendNotification(notif: NotificationItem) {
+        val db = firestore ?: return
+        val map = notificationToMap(notif)
+        db.collection(COL_NOTIFICATIONS).document(notif.id).set(map, SetOptions.merge())
+            .addOnFailureListener { Log.e(TAG, "Failed to send notification: ${it.message}") }
+    }
+
+    fun markNotificationRead(notifId: String) {
+        val db = firestore ?: return
+        db.collection(COL_NOTIFICATIONS).document(notifId).update("isRead", true)
+            .addOnFailureListener { Log.e(TAG, "Failed to mark notification as read: ${it.message}") }
+    }
+
+    fun listenToNotifications(forUid: String, onNotificationsUpdated: (List<NotificationItem>) -> Unit): ListenerRegistration? {
+        val db = firestore ?: return null
+        return try {
+            db.collection(COL_NOTIFICATIONS)
+                .whereEqualTo("toUid", forUid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e(TAG, "Error listening to notifications: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val notifs = snapshot.documents.mapNotNull { doc ->
+                            doc.data?.let { parseNotification(doc.id, it) }
+                        }.sortedByDescending { it.createdAt }
+                        onNotificationsUpdated(notifs)
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to attach notifications listener: ${e.message}")
+            null
         }
     }
 
@@ -474,6 +572,8 @@ object FirebaseManager {
         "id" to m.id,
         "convoId" to m.convoId,
         "fromUid" to m.fromUid,
+        "toUid" to m.toUid,
+        "users" to listOf(m.fromUid, m.toUid).filter { it.isNotBlank() },
         "text" to m.text,
         "isCallLog" to m.isCallLog,
         "callType" to m.callType,
@@ -487,6 +587,7 @@ object FirebaseManager {
         id = id,
         convoId = d["convoId"] as? String ?: "",
         fromUid = d["fromUid"] as? String ?: "",
+        toUid = d["toUid"] as? String ?: "",
         text = d["text"] as? String ?: "",
         isCallLog = d["isCallLog"] as? Boolean ?: false,
         callType = d["callType"] as? String ?: "audio",
@@ -494,5 +595,55 @@ object FirebaseManager {
         callDurationSec = (d["callDurationSec"] as? Number)?.toInt() ?: 0,
         createdAt = (d["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
         editedAt = (d["editedAt"] as? Number)?.toLong()
+    )
+
+    private fun friendRequestToMap(r: FriendRequest): Map<String, Any?> = mapOf(
+        "id" to r.id,
+        "fromUid" to r.fromUid,
+        "fromName" to r.fromName,
+        "fromPhoto" to r.fromPhoto,
+        "toUid" to r.toUid,
+        "status" to r.status,
+        "createdAt" to r.createdAt
+    )
+
+    private fun parseFriendRequest(id: String, d: Map<String, Any?>): FriendRequest = FriendRequest(
+        id = id,
+        fromUid = d["fromUid"] as? String ?: "",
+        fromName = d["fromName"] as? String ?: "User",
+        fromPhoto = d["fromPhoto"] as? String ?: "",
+        toUid = d["toUid"] as? String ?: "",
+        status = d["status"] as? String ?: "pending",
+        createdAt = (d["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
+    )
+
+    private fun notificationToMap(n: NotificationItem): Map<String, Any?> = mapOf(
+        "id" to n.id,
+        "fromUid" to n.fromUid,
+        "fromName" to n.fromName,
+        "fromPhoto" to n.fromPhoto,
+        "toUid" to n.toUid,
+        "text" to n.text,
+        "type" to n.type,
+        "targetId" to n.targetId,
+        "reactionType" to n.reactionType,
+        "amount" to n.amount,
+        "isRead" to n.isRead,
+        "createdAt" to n.createdAt
+    )
+
+    private fun parseNotification(id: String, d: Map<String, Any?>): NotificationItem = NotificationItem(
+        id = id,
+        fromUid = d["fromUid"] as? String ?: "",
+        fromName = d["fromName"] as? String ?: "User",
+        fromPhoto = d["fromPhoto"] as? String ?: "",
+        toUid = d["toUid"] as? String ?: "",
+        text = d["text"] as? String ?: "",
+        type = d["type"] as? String ?: "interaction",
+        targetId = d["targetId"] as? String,
+        reactionType = d["reactionType"] as? String,
+        amount = (d["amount"] as? Number)?.toDouble(),
+        isRead = d["isRead"] as? Boolean ?: false,
+        createdAt = (d["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
     )
 }

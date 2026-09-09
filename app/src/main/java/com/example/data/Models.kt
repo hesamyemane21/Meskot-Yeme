@@ -3,7 +3,7 @@ package com.example.data
 data class User(
     val uid: String,
     val displayName: String,
-    val email: String,
+    val email: String = "",
     val bio: String = "",
     val photoUrl: String = "",
     val isAdmin: Boolean = false,
@@ -83,6 +83,7 @@ data class ChatMessage(
     val id: String,
     val convoId: String,
     val fromUid: String,
+    val toUid: String = "",
     val text: String,
     val isCallLog: Boolean = false,
     val callType: String = "audio", // "audio", "video"
@@ -92,11 +93,22 @@ data class ChatMessage(
     val editedAt: Long? = null
 )
 
+data class FriendRequest(
+    val id: String,
+    val fromUid: String,
+    val fromName: String,
+    val fromPhoto: String = "",
+    val toUid: String,
+    val status: String = "pending", // "pending", "accepted", "declined"
+    val createdAt: Long = System.currentTimeMillis()
+)
+
 data class NotificationItem(
     val id: String,
     val fromUid: String,
     val fromName: String,
     val fromPhoto: String = "",
+    val toUid: String = "",
     val text: String = "",
     val type: String, // "like", "comment", "friend_request", "friend_accept", "message", "share", "tip", "reaction"
     val targetId: String? = null,

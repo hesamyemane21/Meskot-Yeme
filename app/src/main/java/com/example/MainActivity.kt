@@ -123,7 +123,6 @@ fun MeskotApp(viewModel: MeskotViewModel) {
     if (currentUser == null) {
         AuthScreen(
             viewModel = viewModel,
-            allUsers = users,
             currentLanguage = currentLanguage
         )
     } else {

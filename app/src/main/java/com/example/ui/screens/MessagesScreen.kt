@@ -39,6 +39,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -79,7 +80,14 @@ fun MessagesScreen(
     friendUids: Set<String>,
     currentLanguage: AppLanguage
 ) {
+    val conversations by viewModel.conversations.collectAsState()
     val friendsList = allUsers.filter { friendUids.contains(it.uid) }
+    val activeChatUids = (friendUids + conversations.filter { it.value.isNotEmpty() }.keys)
+        .filter { it != currentUser?.uid && !it.contains("_") }
+        .distinct()
+    val activeChatUsers = activeChatUids.mapNotNull { uid ->
+        allUsers.find { it.uid == uid } ?: User(uid = uid, displayName = "Meskot User", bio = "")
+    }
 
     Column(
         modifier = Modifier
@@ -119,13 +127,13 @@ fun MessagesScreen(
                 .fillMaxSize()
                 .padding(horizontal = 14.dp)
         ) {
-            if (friendsList.isEmpty()) {
+            if (activeChatUsers.isEmpty()) {
                 item {
                     EmptyNotice(text = MeskotStrings.get("noConvos", currentLanguage))
                 }
             } else {
-                items(friendsList) { user ->
-                    val messages = viewModel.getMessagesForUser(user.uid)
+                items(activeChatUsers) { user ->
+                    val messages = conversations[user.uid] ?: viewModel.getMessagesForUser(user.uid)
                     val lastMessage = messages.lastOrNull()
 
                     Card(
@@ -189,7 +197,8 @@ fun ChatScreen(
     recipient: User,
     currentLanguage: AppLanguage
 ) {
-    val messages = viewModel.getMessagesForUser(recipient.uid)
+    val conversations by viewModel.conversations.collectAsState()
+    val messages = conversations[recipient.uid] ?: viewModel.getMessagesForUser(recipient.uid)
     var textInput by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 

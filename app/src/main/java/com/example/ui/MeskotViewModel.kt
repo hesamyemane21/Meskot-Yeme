@@ -57,6 +57,7 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
     val groups: StateFlow<List<GroupItem>> = repository.groups
     val albums: StateFlow<List<AlbumItem>> = repository.albums
     val notifications: StateFlow<List<NotificationItem>> = repository.notifications
+    val conversations: StateFlow<Map<String, List<ChatMessage>>> = repository.conversations
     val savedPostIds: StateFlow<Set<String>> = repository.savedPostIds
 
     // Current screen navigation
@@ -432,16 +433,26 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
     }
 
     // Auth
+    fun login(email: String, pass: String, onResult: (Boolean, String?) -> Unit) {
+        repository.login(email, pass) { ok, err ->
+            if (ok) showMessage("Welcome back to Meskot!")
+            onResult(ok, err)
+        }
+    }
+
+    fun signup(fullName: String, email: String, pass: String, onResult: (Boolean, String?) -> Unit) {
+        repository.signup(fullName, email, pass) { ok, err ->
+            if (ok) showMessage("Welcome to Meskot!")
+            onResult(ok, err)
+        }
+    }
+
     fun login(email: String, pass: String): Boolean {
-        val ok = repository.login(email, pass)
-        if (ok) showMessage("Welcome back to Meskot!")
-        return ok
+        return repository.login(email, pass)
     }
 
     fun signup(fullName: String, email: String, pass: String): Boolean {
-        val ok = repository.signup(fullName, email, pass)
-        if (ok) showMessage("Welcome to Meskot!")
-        return ok
+        return repository.signup(fullName, email, pass)
     }
 
     fun logout() {
@@ -450,8 +461,7 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
         showMessage("Logged out")
     }
 
-    fun switchDemoUser(user: User) {
+    fun switchUser(user: User) {
         repository.switchUser(user)
-        showMessage("Switched to ${user.displayName}")
     }
 }

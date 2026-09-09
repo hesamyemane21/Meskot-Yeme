@@ -29,6 +29,12 @@ class MeskotRepositoryTest {
     fun testPostCreationAndReactions() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = MeskotRepository(context)
+        val testUser = com.example.data.User(
+            uid = "test_user_1",
+            displayName = "Test User",
+            email = "test@meskot.et"
+        )
+        repo.switchUser(testUser)
 
         val initialCount = repo.posts.value.size
         repo.createPost(
@@ -59,6 +65,13 @@ class MeskotRepositoryTest {
     fun testComments() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = MeskotRepository(context)
+        val testUser = com.example.data.User(
+            uid = "test_user_1",
+            displayName = "Test User",
+            email = "test@meskot.et"
+        )
+        repo.switchUser(testUser)
+        repo.createPost(text = "Hello Meskot!")
         val firstPost = repo.posts.value.first()
 
         repo.addComment(firstPost.id, "Great post!")
