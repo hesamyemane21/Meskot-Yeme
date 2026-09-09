@@ -123,6 +123,34 @@ class MeskotRepository(private val context: Context) {
 
     init {
         FirebaseManager.initialize(context)
+        setupFirebaseListeners()
+    }
+
+    private fun setupFirebaseListeners() {
+        try {
+            FirebaseManager.listenToPosts { livePosts ->
+                val liveIds = livePosts.map { it.id }.toSet()
+                val remainingLocal = _posts.value.filterNot { it.id in liveIds }
+                _posts.value = (livePosts + remainingLocal).sortedByDescending { it.createdAt }
+            }
+
+            FirebaseManager.listenToComments { liveComments ->
+                val current = _comments.value.toMutableMap()
+                liveComments.forEach { (postId, comments) ->
+                    current[postId] = comments
+                }
+                _comments.value = current
+            }
+
+            FirebaseManager.listenToUsers { liveUsers ->
+                val liveMap = liveUsers.associateBy { it.uid }
+                val updated = _users.value.map { liveMap[it.uid] ?: it } +
+                    liveUsers.filterNot { lu -> _users.value.any { it.uid == lu.uid } }
+                _users.value = updated
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("MeskotRepository", "Could not setup Firebase listeners: ${e.message}")
+        }
     }
 
     // AUTH METHODS
@@ -130,9 +158,18 @@ class MeskotRepository(private val context: Context) {
         val found = _users.value.find { it.email.equals(email.trim(), ignoreCase = true) }
         if (found != null) {
             _currentUser.value = found
+            FirebaseManager.signInWithEmail(email, pass, onSuccess = { fbUser ->
+                _currentUser.value = fbUser
+            }, onFailure = {})
             return true
         }
-        // If not found in demo, create user session
+        FirebaseManager.signInWithEmail(email, pass, onSuccess = { fbUser ->
+            _currentUser.value = fbUser
+            if (_users.value.none { it.uid == fbUser.uid }) {
+                _users.value = _users.value + fbUser
+            }
+        }, onFailure = {})
+
         val newUser = User(
             uid = "user_" + UUID.randomUUID().toString().take(6),
             displayName = email.substringBefore("@").replaceFirstChar { it.uppercase() },
@@ -141,6 +178,7 @@ class MeskotRepository(private val context: Context) {
         )
         _users.value = _users.value + newUser
         _currentUser.value = newUser
+        FirebaseManager.saveUser(newUser)
         return true
     }
 
@@ -153,6 +191,13 @@ class MeskotRepository(private val context: Context) {
         )
         _users.value = _users.value + newUser
         _currentUser.value = newUser
+
+        FirebaseManager.signUpWithEmail(fullName, email, pass, onSuccess = { fbUser ->
+            _currentUser.value = fbUser
+            _users.value = _users.value.map { if (it.uid == newUser.uid) fbUser else it }
+        }, onFailure = {
+            FirebaseManager.saveUser(newUser)
+        })
         return true
     }
 
@@ -161,6 +206,7 @@ class MeskotRepository(private val context: Context) {
     }
 
     fun logout() {
+        FirebaseManager.signOut()
         _currentUser.value = null
     }
 
@@ -173,6 +219,7 @@ class MeskotRepository(private val context: Context) {
         )
         _currentUser.value = updated
         _users.value = _users.value.map { if (it.uid == curr.uid) updated else it }
+        FirebaseManager.saveUser(updated)
     }
 
     // POSTS METHODS
@@ -192,20 +239,24 @@ class MeskotRepository(private val context: Context) {
             createdAt = System.currentTimeMillis()
         )
         _posts.value = listOf(newPost) + _posts.value
+        FirebaseManager.createPost(newPost)
     }
 
     fun editPost(postId: String, newText: String) {
         _posts.value = _posts.value.map {
             if (it.id == postId) it.copy(text = newText, editedAt = System.currentTimeMillis()) else it
         }
+        FirebaseManager.updatePostText(postId, newText)
     }
 
     fun deletePost(postId: String) {
         _posts.value = _posts.value.filterNot { it.id == postId }
+        FirebaseManager.deletePost(postId)
     }
 
     fun toggleReaction(postId: String, reactionType: String) {
         val user = _currentUser.value ?: return
+        var updatedReactionsMap: Map<String, String>? = null
         _posts.value = _posts.value.map { post ->
             if (post.id == postId) {
                 val currentReaction = post.reactions[user.uid]
@@ -225,9 +276,11 @@ class MeskotRepository(private val context: Context) {
                         )
                     }
                 }
+                updatedReactionsMap = updatedReactions
                 post.copy(reactions = updatedReactions)
             } else post
         }
+        updatedReactionsMap?.let { FirebaseManager.updatePostReactions(postId, it) }
     }
 
     fun sharePost(postId: String) {
@@ -277,11 +330,15 @@ class MeskotRepository(private val context: Context) {
 
     fun sendTip(postId: String, amount: Double) {
         val user = _currentUser.value ?: return
+        var updatedTipTotal: Double? = null
         _posts.value = _posts.value.map { post ->
             if (post.id == postId) {
-                post.copy(tipTotal = post.tipTotal + amount)
+                val newTotal = post.tipTotal + amount
+                updatedTipTotal = newTotal
+                post.copy(tipTotal = newTotal)
             } else post
         }
+        updatedTipTotal?.let { FirebaseManager.updatePostTip(postId, it) }
         val post = _posts.value.find { it.id == postId } ?: return
         if (post.uid != user.uid) {
             addNotification(
@@ -314,10 +371,10 @@ class MeskotRepository(private val context: Context) {
         )
         val currentList = _comments.value[postId] ?: emptyList()
         _comments.value = _comments.value + (postId to (currentList + newComment))
-        // Increment post comment count
         _posts.value = _posts.value.map {
             if (it.id == postId) it.copy(commentCount = it.commentCount + 1) else it
         }
+        FirebaseManager.addComment(newComment)
         val post = _posts.value.find { it.id == postId }
         if (post != null && post.uid != user.uid) {
             addNotification(
@@ -359,6 +416,7 @@ class MeskotRepository(private val context: Context) {
         _posts.value = _posts.value.map {
             if (it.id == postId) it.copy(commentCount = maxOf(0, it.commentCount - 1)) else it
         }
+        FirebaseManager.deleteComment(postId, commentId)
     }
 
     // FRIENDS
@@ -459,7 +517,7 @@ class MeskotRepository(private val context: Context) {
         )
         val currentMsgs = _conversations.value[otherUid] ?: emptyList()
         _conversations.value = _conversations.value + (otherUid to (currentMsgs + newMsg))
-        FirebaseManager.sendMessage(convId, user.uid, text)
+        FirebaseManager.sendMessage(newMsg)
         addNotification(
             fromUid = user.uid,
             fromName = user.displayName,
