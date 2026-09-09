@@ -30,6 +30,7 @@ object FirebaseManager {
     const val COL_ALBUMS = "albums"
     const val COL_MESSAGES = "messages"
     const val COL_NOTIFICATIONS = "notifications"
+    const val COL_FRIEND_REQUESTS = "friendRequests"
 
     fun initialize(context: Context) {
         if (isInitialized) return
@@ -353,6 +354,33 @@ object FirebaseManager {
         val map = chatMessageToMap(msg)
         db.collection(COL_MESSAGES).document(msg.id).set(map, SetOptions.merge())
             .addOnFailureListener { Log.e(TAG, "Failed to send message: ${it.message}") }
+    }
+
+    // FIRESTORE: FRIEND REQUESTS
+    fun sendFriendRequest(fromUid: String, toUid: String) {
+        val db = firestore ?: return
+        val id = "${fromUid}_$toUid"
+        val map = mapOf(
+            "id" to id, "fromUid" to fromUid, "toUid" to toUid,
+            "status" to "pending", "createdAt" to System.currentTimeMillis()
+        )
+        db.collection(COL_FRIEND_REQUESTS).document(id).set(map, SetOptions.merge())
+            .addOnFailureListener { Log.e(TAG, "Failed to send friend request: ${it.message}") }
+    }
+
+    fun respondToFriendRequest(fromUid: String, toUid: String, accept: Boolean) {
+        val db = firestore ?: return
+        db.collection(COL_FRIEND_REQUESTS).document("${fromUid}_$toUid")
+            .update("status", if (accept) "accepted" else "declined")
+            .addOnFailureListener { Log.e(TAG, "Failed to respond to friend request: ${it.message}") }
+    }
+
+    fun listenToFriendRequests(onUpdated: (List<Map<String, Any?>>) -> Unit): ListenerRegistration? {
+        val db = firestore ?: return null
+        return db.collection(COL_FRIEND_REQUESTS).addSnapshotListener { snapshot, error ->
+            if (error != null) { Log.e(TAG, "Error listening to friend requests: ${error.message}"); return@addSnapshotListener }
+            snapshot?.let { onUpdated(it.documents.mapNotNull { d -> d.data }) }
+        }
     }
 
     // SERIALIZATION HELPERS
