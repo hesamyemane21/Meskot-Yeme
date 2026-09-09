@@ -8,13 +8,23 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1083041536701:web:4654f20e5ae08a2d0435d4"
+        "mobilesdk_app_id": "1:1083041536701:android:53d2ea33d9a4384b0435d4",
+        "android_client_info": {
+          "package_name": "com.aistudio.meskot.zqkv"
+        }
       },
+      "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyD9j6Emef7z1sxtGuqgEePwIJetPo4ZhQQ"
+          "current_key": "AIzaSyCyJDYxB__i3V7e03X6SjEvRAHV01t29S4"
         }
-      ]
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
     }
-  ]
+  ],
+  "configuration_version": "1"
 }
