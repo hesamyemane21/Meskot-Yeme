@@ -142,6 +142,36 @@ class MeskotRepository(private val context: Context) {
                 _comments.value = current
             }
 
+FirebaseManager.listenToMessages { liveMessages ->
+val myUid = _currentUser.value?.uid ?: return@listenToMessages
+val merged = _conversations.value.toMutableMap()
+liveMessages
+.filter { it.fromUid == myUid || it.convoId == myUid }
+.groupBy { if (it.fromUid == myUid) it.convoId else it.fromUid }
+.forEach { (otherUid, msgs) ->
+val existingIds = (merged[otherUid] ?: emptyList()).map { it.id }.toSet()
+val newOnes = msgs.filterNot { it.id in existingIds }
+if (newOnes.isNotEmpty()) {
+merged[otherUid] = ((merged[otherUid] ?: emptyList()) + newOnes).sortedBy { it.createdAt }
+}
+}
+_conversations.value = merged
+}
+
+FirebaseManager.listenToFriendRequests { requests ->
+val myUid = _currentUser.value?.uid ?: return@listenToFriendRequests
+val incoming = requests.filter { it["toUid"] == myUid && it["status"] == "pending" }
+.mapNotNull { req -> _users.value.find { it.uid == req["fromUid"] } }
+val outgoing = requests.filter { it["fromUid"] == myUid && it["status"] == "pending" }
+.mapNotNull { it["toUid"] as? String }.toSet()
+_incomingRequests.value = incoming
+_outgoingRequests.value = outgoing
+
+val accepted = requests.filter { it["status"] == "accepted" && (it["fromUid"] == myUid || it["toUid"] == myUid) }
+accepted.forEach { req ->
+val other = if (req["fromUid"] == myUid) req["toUid"] as? String else req["fromUid"] as? String
+if (other != null) _friends.value = _friends.value + other
+}
             FirebaseManager.listenToUsers { liveUsers ->
                 val liveMap = liveUsers.associateBy { it.uid }
                 val updated = _users.value.map { liveMap[it.uid] ?: it } +
@@ -423,39 +453,24 @@ class MeskotRepository(private val context: Context) {
 
     // FRIENDS
     fun sendFriendRequest(toUid: String) {
-        val user = _currentUser.value ?: return
-        _outgoingRequests.value = _outgoingRequests.value + toUid
-        addNotification(
-            fromUid = user.uid,
-            fromName = user.displayName,
-            fromPhoto = user.photoUrl,
-            type = "friend_request"
-        )
-    }
+val user = _currentUser.value ?: return
+FirebaseManager.sendFriendRequest(user.uid, toUid)
+}
 
-    fun cancelFriendRequest(toUid: String) {
-        _outgoingRequests.value = _outgoingRequests.value - toUid
-    }
+fun cancelFriendRequest(toUid: String) {
+val user = _currentUser.value ?: return
+FirebaseManager.respondToFriendRequest(user.uid, toUid, accept = false)
+}
 
-    fun acceptFriendRequest(fromUid: String) {
-        val user = _currentUser.value ?: return
-        _friends.value = _friends.value + fromUid
-        _incomingRequests.value = _incomingRequests.value.filterNot { it.uid == fromUid }
-        addNotification(
-            fromUid = user.uid,
-            fromName = user.displayName,
-            fromPhoto = user.photoUrl,
-            type = "friend_accept"
-        )
-    }
+fun acceptFriendRequest(fromUid: String) {
+val user = _currentUser.value ?: return
+FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = true)
+}
 
-    fun declineFriendRequest(fromUid: String) {
-        _incomingRequests.value = _incomingRequests.value.filterNot { it.uid == fromUid }
-    }
-
-    fun unfriend(uid: String) {
-        _friends.value = _friends.value - uid
-    }
+fun declineFriendRequest(fromUid: String) {
+val user = _currentUser.value ?: return
+FirebaseManager.respondToFriendRequest(fromUid, user.uid, accept = false)
+}
 
     // MESSAGES & CHAT
     fun getMessages(otherUid: String): List<ChatMessage> {
