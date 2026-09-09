@@ -20,16 +20,20 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import com.example.data.MeskotRepository
 import com.example.ui.MeskotViewModel
 import com.example.ui.ScreenTab
 import com.example.ui.components.CallOverlay
+import com.example.ui.components.IncomingCallOverlay
 import com.example.ui.components.ComposerDialog
 import com.example.ui.components.EditProfileDialog
 import com.example.ui.components.IconNavBar
 import com.example.ui.components.PostOptionsMenu
 import com.example.ui.components.TipModal
 import com.example.ui.components.TopNavBar
+import com.example.util.CallAudioManager
 import com.example.ui.screens.AdminScreen
 import com.example.ui.screens.AlbumDetailScreen
 import com.example.ui.screens.AuthScreen
@@ -52,6 +56,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        CallAudioManager.init(applicationContext)
 
         val repository = MeskotRepository(applicationContext)
 
@@ -95,9 +101,15 @@ fun MeskotApp(viewModel: MeskotViewModel) {
 
     val isComposerOpen by viewModel.isComposerOpen.collectAsState()
     val activeCall by viewModel.activeCall.collectAsState()
+    val incomingCall by viewModel.incomingCall.collectAsState()
+    val incomingMessageAlert by viewModel.incomingMessageAlert.collectAsState()
     val tippingPost by viewModel.tippingPost.collectAsState()
     val postMenuTarget by viewModel.postMenuTarget.collectAsState()
     val isEditProfileOpen by viewModel.isEditProfileOpen.collectAsState()
+
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* Handled gracefully */ }
 
     val userMessage by viewModel.userMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -362,13 +374,37 @@ fun MeskotApp(viewModel: MeskotViewModel) {
                     )
                 }
 
+                // Incoming Call Overlay
+                if (activeCall == null) {
+                    incomingCall?.let { session ->
+                        IncomingCallOverlay(
+                            session = session,
+                            currentLanguage = currentLanguage,
+                            onAccept = {
+                                callPermissionLauncher.launch(
+                                    arrayOf(
+                                        android.Manifest.permission.RECORD_AUDIO,
+                                        android.Manifest.permission.CAMERA
+                                    )
+                                )
+                                viewModel.acceptIncomingCall()
+                            },
+                            onDecline = {
+                                viewModel.declineIncomingCall()
+                            }
+                        )
+                    }
+                }
+
                 // Active Audio / Video Call Overlay
                 activeCall?.let { call ->
                     CallOverlay(
                         activeCall = call,
                         currentLanguage = currentLanguage,
                         onToggleMute = { viewModel.toggleCallMute() },
+                        onToggleSpeaker = { viewModel.toggleCallSpeaker() },
                         onToggleCamera = { viewModel.toggleCallCamera() },
+                        onFlipCamera = { viewModel.flipCamera() },
                         onEndCall = { viewModel.endCall() }
                     )
                 }

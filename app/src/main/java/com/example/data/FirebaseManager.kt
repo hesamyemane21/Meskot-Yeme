@@ -32,6 +32,7 @@ object FirebaseManager {
     const val COL_NOTIFICATIONS = "notifications"
     const val COL_FRIEND_REQUESTS = "friend_requests"
     const val COL_FRIENDSHIPS = "friendships"
+    const val COL_CALLS = "calls"
 
     fun initialize(context: Context) {
         if (isInitialized) return
@@ -327,7 +328,6 @@ object FirebaseManager {
         val db = firestore ?: return null
         return try {
             db.collection(COL_MESSAGES)
-                .orderBy("createdAt", Query.Direction.ASCENDING)
                 .addSnapshotListener { snapshot, error ->
                     if (error != null) {
                         Log.e(TAG, "Error listening to messages: ${error.message}")
@@ -336,7 +336,7 @@ object FirebaseManager {
                     if (snapshot != null) {
                         val msgs = snapshot.documents.mapNotNull { doc ->
                             doc.data?.let { parseChatMessage(doc.id, it) }
-                        }
+                        }.sortedBy { it.createdAt }
                         if (msgs.isNotEmpty()) {
                             onMessagesUpdated(msgs)
                         }
@@ -348,11 +348,100 @@ object FirebaseManager {
         }
     }
 
-    fun sendMessage(msg: ChatMessage) {
-        val db = firestore ?: return
+    // Direct high-priority listener for messages addressed to or participated in by a specific user
+    fun listenToUserMessages(uid: String, onMessagesUpdated: (List<ChatMessage>) -> Unit): List<ListenerRegistration> {
+        val db = firestore ?: return emptyList()
+        val registrations = mutableListOf<ListenerRegistration>()
+        try {
+            // 1. Direct incoming messages
+            val regIncoming = db.collection(COL_MESSAGES)
+                .whereEqualTo("toUid", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w(TAG, "Error in incoming message listener for $uid: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val msgs = snapshot.documents.mapNotNull { doc ->
+                            doc.data?.let { parseChatMessage(doc.id, it) }
+                        }.sortedBy { it.createdAt }
+                        if (msgs.isNotEmpty()) {
+                            onMessagesUpdated(msgs)
+                        }
+                    }
+                }
+            registrations.add(regIncoming)
+
+            // 2. Direct outgoing messages (for real-time multi-device sync)
+            val regOutgoing = db.collection(COL_MESSAGES)
+                .whereEqualTo("fromUid", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w(TAG, "Error in outgoing message listener for $uid: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val msgs = snapshot.documents.mapNotNull { doc ->
+                            doc.data?.let { parseChatMessage(doc.id, it) }
+                        }.sortedBy { it.createdAt }
+                        if (msgs.isNotEmpty()) {
+                            onMessagesUpdated(msgs)
+                        }
+                    }
+                }
+            registrations.add(regOutgoing)
+
+            // 3. User participant array
+            val regUsers = db.collection(COL_MESSAGES)
+                .whereArrayContains("users", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.w(TAG, "Error in participant message listener for $uid: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val msgs = snapshot.documents.mapNotNull { doc ->
+                            doc.data?.let { parseChatMessage(doc.id, it) }
+                        }.sortedBy { it.createdAt }
+                        if (msgs.isNotEmpty()) {
+                            onMessagesUpdated(msgs)
+                        }
+                    }
+                }
+            registrations.add(regUsers)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to attach user message listeners: ${e.message}")
+        }
+        return registrations
+    }
+
+    fun sendMessage(msg: ChatMessage, onComplete: ((Boolean) -> Unit)? = null) {
+        val db = firestore ?: run {
+            onComplete?.invoke(false)
+            return
+        }
         val map = chatMessageToMap(msg)
         db.collection(COL_MESSAGES).document(msg.id).set(map, SetOptions.merge())
-            .addOnFailureListener { Log.e(TAG, "Failed to send message: ${it.message}") }
+            .addOnSuccessListener {
+                onComplete?.invoke(true)
+            }
+            .addOnFailureListener {
+                Log.e(TAG, "Failed to send message: ${it.message}")
+                onComplete?.invoke(false)
+            }
+    }
+
+    fun updateMessageText(msgId: String, newText: String) {
+        val db = firestore ?: return
+        db.collection(COL_MESSAGES).document(msgId)
+            .update(mapOf("text" to newText, "editedAt" to System.currentTimeMillis()))
+            .addOnFailureListener { Log.e(TAG, "Failed to update message: ${it.message}") }
+    }
+
+    fun deleteMessage(msgId: String) {
+        val db = firestore ?: return
+        db.collection(COL_MESSAGES).document(msgId).delete()
+            .addOnFailureListener { Log.e(TAG, "Failed to delete message: ${it.message}") }
     }
 
     // FIRESTORE: FRIEND REQUESTS
@@ -645,5 +734,110 @@ object FirebaseManager {
         amount = (d["amount"] as? Number)?.toDouble(),
         isRead = d["isRead"] as? Boolean ?: false,
         createdAt = (d["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
+    )
+
+    // FIRESTORE: CALLS & SIGNALING
+    fun createCall(session: CallSession, onComplete: ((Boolean) -> Unit)? = null) {
+        val db = firestore ?: run {
+            onComplete?.invoke(false)
+            return
+        }
+        val map = callSessionToMap(session)
+        db.collection(COL_CALLS).document(session.callId).set(map)
+            .addOnSuccessListener { onComplete?.invoke(true) }
+            .addOnFailureListener {
+                Log.e(TAG, "Failed to create call doc: ${it.message}")
+                onComplete?.invoke(false)
+            }
+    }
+
+    fun updateCallStatus(callId: String, status: String, startedAt: Long? = null, endedAt: Long? = null) {
+        val db = firestore ?: return
+        val updates = mutableMapOf<String, Any>("status" to status)
+        if (startedAt != null) updates["startedAt"] = startedAt
+        if (endedAt != null) updates["endedAt"] = endedAt
+        db.collection(COL_CALLS).document(callId).update(updates)
+            .addOnFailureListener { Log.e(TAG, "Failed to update call status: ${it.message}") }
+    }
+
+    fun listenToCall(callId: String, onUpdate: (CallSession?) -> Unit): ListenerRegistration? {
+        val db = firestore ?: return null
+        return try {
+            db.collection(COL_CALLS).document(callId)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e(TAG, "Error listening to call $callId: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null && snapshot.exists()) {
+                        val session = snapshot.data?.let { parseCallSession(snapshot.id, it) }
+                        onUpdate(session)
+                    } else {
+                        onUpdate(null)
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to attach call listener: ${e.message}")
+            null
+        }
+    }
+
+    fun listenToIncomingCalls(userUid: String, onIncomingCall: (CallSession) -> Unit): ListenerRegistration? {
+        val db = firestore ?: return null
+        return try {
+            db.collection(COL_CALLS)
+                .whereEqualTo("receiverUid", userUid)
+                .whereEqualTo("status", "ringing")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e(TAG, "Error listening to incoming calls: ${error.message}")
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        for (doc in snapshot.documents) {
+                            val d = doc.data ?: continue
+                            val session = parseCallSession(doc.id, d)
+                            if (System.currentTimeMillis() - session.createdAt < 60000L) {
+                                onIncomingCall(session)
+                            }
+                        }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to attach incoming calls listener: ${e.message}")
+            null
+        }
+    }
+
+    private fun callSessionToMap(s: CallSession): Map<String, Any?> = mapOf(
+        "callId" to s.callId,
+        "callerUid" to s.callerUid,
+        "callerName" to s.callerName,
+        "callerPhoto" to s.callerPhoto,
+        "receiverUid" to s.receiverUid,
+        "receiverName" to s.receiverName,
+        "receiverPhoto" to s.receiverPhoto,
+        "callType" to s.callType,
+        "status" to s.status,
+        "roomUrl" to s.roomUrl,
+        "createdAt" to s.createdAt,
+        "startedAt" to s.startedAt,
+        "endedAt" to s.endedAt
+    )
+
+    private fun parseCallSession(id: String, d: Map<String, Any?>): CallSession = CallSession(
+        callId = id,
+        callerUid = d["callerUid"] as? String ?: "",
+        callerName = d["callerName"] as? String ?: "User",
+        callerPhoto = d["callerPhoto"] as? String ?: "",
+        receiverUid = d["receiverUid"] as? String ?: "",
+        receiverName = d["receiverName"] as? String ?: "User",
+        receiverPhoto = d["receiverPhoto"] as? String ?: "",
+        callType = d["callType"] as? String ?: "audio",
+        status = d["status"] as? String ?: "ringing",
+        roomUrl = d["roomUrl"] as? String ?: "",
+        createdAt = (d["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+        startedAt = (d["startedAt"] as? Number)?.toLong(),
+        endedAt = (d["endedAt"] as? Number)?.toLong()
     )
 }

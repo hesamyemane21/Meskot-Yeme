@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AlbumItem
 import com.example.data.AppLanguage
+import com.example.data.CallSession
 import com.example.data.ChatMessage
 import com.example.data.Comment
 import com.example.data.GroupItem
@@ -11,6 +12,8 @@ import com.example.data.MeskotRepository
 import com.example.data.NotificationItem
 import com.example.data.Post
 import com.example.data.User
+import com.example.util.CallAudioManager
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,12 +41,17 @@ enum class ScreenTab {
 }
 
 data class ActiveCall(
+    val callId: String = "",
     val otherUser: User,
     val callType: String, // "audio" or "video"
+    val isOutgoing: Boolean = false,
     val isRinging: Boolean = true,
     val durationSec: Int = 0,
     val isMuted: Boolean = false,
-    val isCameraOff: Boolean = false
+    val isCameraOff: Boolean = false,
+    val isSpeakerOn: Boolean = false,
+    val isFrontCamera: Boolean = true,
+    val roomUrl: String = ""
 )
 
 class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
@@ -59,6 +67,7 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
     val notifications: StateFlow<List<NotificationItem>> = repository.notifications
     val conversations: StateFlow<Map<String, List<ChatMessage>>> = repository.conversations
     val savedPostIds: StateFlow<Set<String>> = repository.savedPostIds
+    val incomingCall: StateFlow<CallSession?> = repository.incomingCall
 
     // Current screen navigation
     private val _currentTab = MutableStateFlow(ScreenTab.FEED)
@@ -133,7 +142,17 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
         notifs[0].count { !it.isRead }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val unreadMsgCount: StateFlow<Int> = MutableStateFlow(1)
+    val unreadMsgCount: StateFlow<Int> = repository.unreadMsgCount
+
+    val incomingMessageAlert: StateFlow<ChatMessage?> = repository.incomingMessageAlert
+
+    fun clearIncomingMessageAlert() {
+        repository.clearIncomingMessageAlert()
+    }
+
+    fun markConversationAsRead(otherUid: String) {
+        repository.markConversationAsRead(otherUid)
+    }
 
     // Navigation
     fun navigateTo(tab: ScreenTab) {
@@ -153,6 +172,13 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
     fun openChat(user: User) {
         _chattingWithUser.value = user
         _currentTab.value = ScreenTab.CHAT
+        repository.markConversationAsRead(user.uid)
+        clearIncomingMessageAlert()
+    }
+
+    fun openChatByUid(uid: String) {
+        val user = repository.users.value.find { it.uid == uid } ?: User(uid = uid, displayName = "Meskot User", bio = "")
+        openChat(user)
     }
 
     fun openGroupDetail(group: GroupItem) {
@@ -316,23 +342,100 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
     }
 
     // Audio / Video Calls
+    private var callTimerJob: Job? = null
+
     fun startCall(otherUser: User, callType: String) {
-        _activeCall.value = ActiveCall(
-            otherUser = otherUser,
-            callType = callType,
-            isRinging = true
-        )
-        viewModelScope.launch {
-            delay(2500) // Realistic ringing duration
-            if (_activeCall.value != null) {
-                _activeCall.value = _activeCall.value?.copy(isRinging = false)
-                startCallTimer()
+        CallAudioManager.stopRinging()
+        CallAudioManager.startOutgoingRing()
+
+        repository.initiateCall(otherUser, callType) { session ->
+            _activeCall.value = ActiveCall(
+                callId = session.callId,
+                otherUser = otherUser,
+                callType = callType,
+                isOutgoing = true,
+                isRinging = true,
+                roomUrl = session.roomUrl,
+                isSpeakerOn = (callType == "video")
+            )
+
+            // Listen to remote changes on this call session in Firestore
+            repository.listenToCallSession(session.callId) { updatedSession ->
+                if (updatedSession == null) return@listenToCallSession
+                when (updatedSession.status) {
+                    "accepted" -> {
+                        CallAudioManager.stopRinging()
+                        CallAudioManager.startCommunication(isSpeakerDefault = (callType == "video"))
+                        _activeCall.value = _activeCall.value?.copy(isRinging = false)
+                        startCallTimer()
+                    }
+                    "rejected" -> {
+                        CallAudioManager.stopRinging()
+                        CallAudioManager.endCall()
+                        _userMessage.value = "${otherUser.displayName} declined the call"
+                        _activeCall.value = null
+                        repository.stopListeningToCallSession()
+                    }
+                    "ended" -> {
+                        CallAudioManager.stopRinging()
+                        CallAudioManager.endCall()
+                        _activeCall.value = null
+                        repository.stopListeningToCallSession()
+                    }
+                }
             }
         }
     }
 
+    fun acceptIncomingCall() {
+        val inc = incomingCall.value ?: return
+        CallAudioManager.stopRinging()
+        CallAudioManager.startCommunication(isSpeakerDefault = (inc.callType == "video"))
+
+        val callerUser = users.value.find { it.uid == inc.callerUid } ?: User(
+            uid = inc.callerUid,
+            displayName = inc.callerName,
+            photoUrl = inc.callerPhoto
+        )
+
+        repository.acceptIncomingCall(inc.callId)
+
+        _activeCall.value = ActiveCall(
+            callId = inc.callId,
+            otherUser = callerUser,
+            callType = inc.callType,
+            isOutgoing = false,
+            isRinging = false,
+            roomUrl = inc.roomUrl,
+            isSpeakerOn = (inc.callType == "video")
+        )
+        startCallTimer()
+
+        // Listen for caller ending the call
+        repository.listenToCallSession(inc.callId) { updatedSession ->
+            if (updatedSession != null && updatedSession.status == "ended") {
+                CallAudioManager.endCall()
+                _activeCall.value = null
+                repository.stopListeningToCallSession()
+            }
+        }
+    }
+
+    fun declineIncomingCall() {
+        val inc = incomingCall.value ?: return
+        CallAudioManager.stopRinging()
+        CallAudioManager.endCall()
+        repository.declineIncomingCall(inc.callId)
+    }
+
+    fun dismissIncomingCall() {
+        CallAudioManager.stopRinging()
+        repository.dismissIncomingCall()
+    }
+
     private fun startCallTimer() {
-        viewModelScope.launch {
+        callTimerJob?.cancel()
+        callTimerJob = viewModelScope.launch {
             while (_activeCall.value != null && !_activeCall.value!!.isRinging) {
                 delay(1000)
                 _activeCall.value = _activeCall.value?.let { it.copy(durationSec = it.durationSec + 1) }
@@ -341,20 +444,34 @@ class MeskotViewModel(private val repository: MeskotRepository) : ViewModel() {
     }
 
     fun toggleCallMute() {
-        _activeCall.value = _activeCall.value?.let { it.copy(isMuted = !it.isMuted) }
+        val isMuted = CallAudioManager.toggleMicrophoneMute()
+        _activeCall.value = _activeCall.value?.copy(isMuted = isMuted)
+    }
+
+    fun toggleCallSpeaker() {
+        val isSpeaker = CallAudioManager.toggleSpeakerphone()
+        _activeCall.value = _activeCall.value?.copy(isSpeakerOn = isSpeaker)
     }
 
     fun toggleCallCamera() {
         _activeCall.value = _activeCall.value?.let { it.copy(isCameraOff = !it.isCameraOff) }
     }
 
+    fun flipCamera() {
+        _activeCall.value = _activeCall.value?.let { it.copy(isFrontCamera = !it.isFrontCamera) }
+    }
+
     fun endCall() {
         val call = _activeCall.value
+        callTimerJob?.cancel()
+        callTimerJob = null
+        CallAudioManager.stopRinging()
+        CallAudioManager.endCall()
         if (call != null) {
-            repository.logCall(
+            repository.terminateCall(
+                callId = call.callId,
                 otherUid = call.otherUser.uid,
                 callType = call.callType,
-                callStatus = if (call.durationSec > 0) "completed" else "missed",
                 durationSec = call.durationSec
             )
         }

@@ -126,3 +126,20 @@ enum class ReactionType(val code: String, val emoji: String, val labelKey: Strin
     SAD("sad", "😢", "reactSad"),
     ANGRY("angry", "😡", "reactAngry")
 }
+
+data class CallSession(
+    val callId: String = "",
+    val callerUid: String = "",
+    val callerName: String = "",
+    val callerPhoto: String = "",
+    val receiverUid: String = "",
+    val receiverName: String = "",
+    val receiverPhoto: String = "",
+    val callType: String = "audio", // "audio", "video"
+    val status: String = "ringing", // "ringing", "accepted", "rejected", "ended", "missed"
+    val roomUrl: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val startedAt: Long? = null,
+    val endedAt: Long? = null
+)
+

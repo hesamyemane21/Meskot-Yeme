@@ -16,6 +16,7 @@ val CrossRed = Color(0xFF8C2F39)
 val LineBorder = Color(0xFFD8DECF)
 val MutedText = Color(0xFF5C6B5F)
 val ActiveGreen = Color(0xFF31A24C)
+val GreenAccent = Color(0xFF31A24C)
 
 // Post Background Gradients
 val PostGradient1 = Brush.linearGradient(listOf(Color(0xFF8C2F39), Color(0xFFB8863A)))

@@ -82,11 +82,30 @@ fun MessagesScreen(
 ) {
     val conversations by viewModel.conversations.collectAsState()
     val friendsList = allUsers.filter { friendUids.contains(it.uid) }
-    val activeChatUids = (friendUids + conversations.filter { it.value.isNotEmpty() }.keys)
-        .filter { it != currentUser?.uid && !it.contains("_") }
-        .distinct()
-    val activeChatUsers = activeChatUids.mapNotNull { uid ->
-        allUsers.find { it.uid == uid } ?: User(uid = uid, displayName = "Meskot User", bio = "")
+
+    // Combine all sources of chat partner UIDs: direct keys, partner uids from all messages, and friend lists
+    val chatPartnersFromMessages = remember(conversations, currentUser?.uid) {
+        conversations.values.flatten()
+            .mapNotNull { msg ->
+                when {
+                    msg.fromUid == currentUser?.uid && msg.toUid.isNotBlank() -> msg.toUid
+                    msg.toUid == currentUser?.uid && msg.fromUid.isNotBlank() -> msg.fromUid
+                    else -> null
+                }
+            }
+    }
+    val activeChatUids = remember(friendUids, conversations, chatPartnersFromMessages, currentUser?.uid) {
+        val nonConvoKeys = conversations.filter { it.value.isNotEmpty() }.keys.filter { !it.contains("_") }
+        (friendUids + nonConvoKeys + chatPartnersFromMessages)
+            .filter { it.isNotBlank() && it != currentUser?.uid }
+            .distinct()
+    }
+    val activeChatUsers = remember(activeChatUids, allUsers, conversations) {
+        activeChatUids.map { uid ->
+            allUsers.find { it.uid == uid } ?: User(uid = uid, displayName = "Meskot User", bio = "")
+        }.sortedByDescending { user ->
+            viewModel.getMessagesForUser(user.uid).lastOrNull()?.createdAt ?: 0L
+        }
     }
 
     Column(
@@ -133,8 +152,11 @@ fun MessagesScreen(
                 }
             } else {
                 items(activeChatUsers) { user ->
-                    val messages = conversations[user.uid] ?: viewModel.getMessagesForUser(user.uid)
+                    val messages = remember(conversations, user.uid, currentUser?.uid) {
+                        viewModel.getMessagesForUser(user.uid)
+                    }
                     val lastMessage = messages.lastOrNull()
+                    val isLastFromPartner = lastMessage != null && lastMessage.fromUid == user.uid
 
                     Card(
                         modifier = Modifier
@@ -165,18 +187,30 @@ fun MessagesScreen(
                                 Text(
                                     text = lastMessage?.text ?: "Say hello 👋",
                                     fontSize = 13.sp,
-                                    color = MutedText,
+                                    color = if (isLastFromPartner) Ink else MutedText,
+                                    fontWeight = if (isLastFromPartner) FontWeight.SemiBold else FontWeight.Normal,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
 
                             if (lastMessage != null) {
-                                Text(
-                                    text = MeskotStrings.timeAgo(lastMessage.createdAt, currentLanguage),
-                                    fontSize = 11.sp,
-                                    color = MutedText
-                                )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text(
+                                        text = MeskotStrings.timeAgo(lastMessage.createdAt, currentLanguage),
+                                        fontSize = 11.sp,
+                                        color = MutedText
+                                    )
+                                    if (isLastFromPartner) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(8.dp)
+                                                .clip(CircleShape)
+                                                .background(com.example.ui.theme.GoldDeep)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -198,15 +232,26 @@ fun ChatScreen(
     currentLanguage: AppLanguage
 ) {
     val conversations by viewModel.conversations.collectAsState()
-    val messages = conversations[recipient.uid] ?: viewModel.getMessagesForUser(recipient.uid)
+    val messages = remember(conversations, recipient.uid, currentUser?.uid) {
+        viewModel.getMessagesForUser(recipient.uid)
+    }
     var textInput by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+
+    LaunchedEffect(recipient.uid) {
+        viewModel.markConversationAsRead(recipient.uid)
+    }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
+        viewModel.markConversationAsRead(recipient.uid)
     }
+
+    val callPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { /* Handled gracefully */ }
 
     Column(
         modifier = Modifier
@@ -245,7 +290,10 @@ fun ChatScreen(
                 // Call Action Buttons (Audio Call 📞, Video Call 📹)
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     IconButton(
-                        onClick = { viewModel.startCall(recipient, "audio") },
+                        onClick = {
+                            callPermissionLauncher.launch(arrayOf(android.Manifest.permission.RECORD_AUDIO))
+                            viewModel.startCall(recipient, "audio")
+                        },
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
@@ -255,7 +303,15 @@ fun ChatScreen(
                     }
 
                     IconButton(
-                        onClick = { viewModel.startCall(recipient, "video") },
+                        onClick = {
+                            callPermissionLauncher.launch(
+                                arrayOf(
+                                    android.Manifest.permission.RECORD_AUDIO,
+                                    android.Manifest.permission.CAMERA
+                                )
+                            )
+                            viewModel.startCall(recipient, "video")
+                        },
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
@@ -289,7 +345,19 @@ fun ChatScreen(
                         CallLogBubble(
                             msg = msg,
                             currentLanguage = currentLanguage,
-                            onCallBack = { viewModel.startCall(recipient, msg.callType) }
+                            onCallBack = {
+                                if (msg.callType == "video") {
+                                    callPermissionLauncher.launch(
+                                        arrayOf(
+                                            android.Manifest.permission.RECORD_AUDIO,
+                                            android.Manifest.permission.CAMERA
+                                        )
+                                    )
+                                } else {
+                                    callPermissionLauncher.launch(arrayOf(android.Manifest.permission.RECORD_AUDIO))
+                                }
+                                viewModel.startCall(recipient, msg.callType)
+                            }
                         )
                     } else {
                         ChatMessageBubble(

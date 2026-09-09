@@ -73,6 +73,39 @@ class MeskotRepository(private val context: Context) {
     val hiddenPostIds: StateFlow<Set<String>> = _hiddenPostIds.asStateFlow()
 
     private var notifListenerRegistration: com.google.firebase.firestore.ListenerRegistration? = null
+    private var incomingCallsListenerRegistration: com.google.firebase.firestore.ListenerRegistration? = null
+    private var activeCallListenerRegistration: com.google.firebase.firestore.ListenerRegistration? = null
+    private var userMessageRegistrations: List<com.google.firebase.firestore.ListenerRegistration> = emptyList()
+    private var generalMessagesRegistration: com.google.firebase.firestore.ListenerRegistration? = null
+
+    // Incoming call
+    private val _incomingCall = MutableStateFlow<CallSession?>(null)
+    val incomingCall: StateFlow<CallSession?> = _incomingCall.asStateFlow()
+
+    // Real-time Incoming Message Alert (for heads-up banner / instant toast)
+    private val _incomingMessageAlert = MutableStateFlow<ChatMessage?>(null)
+    val incomingMessageAlert: StateFlow<ChatMessage?> = _incomingMessageAlert.asStateFlow()
+
+    fun clearIncomingMessageAlert() {
+        _incomingMessageAlert.value = null
+    }
+
+    // Unread tracking per sender
+    private val _lastReadTimestamps = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    fun markConversationAsRead(otherUid: String) {
+        _lastReadTimestamps.value = _lastReadTimestamps.value + (otherUid to System.currentTimeMillis())
+    }
+
+    // Dynamic unread messages count
+    val unreadMsgCount: StateFlow<Int> = kotlinx.coroutines.flow.combine(_conversations, _lastReadTimestamps, _currentUser) { convos, readMap, user ->
+        if (user == null) return@combine 0
+        val partnersWithUnread = convos.filterKeys { !it.contains("_") && it != user.uid }.count { (partnerUid, messages) ->
+            val lastRead = readMap[partnerUid] ?: 0L
+            messages.any { it.toUid == user.uid && it.fromUid == partnerUid && it.createdAt > lastRead && !it.isCallLog }
+        }
+        partnersWithUnread
+    }.stateIn(kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default), kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5000), 0)
 
     init {
         FirebaseManager.initialize(context)
@@ -96,6 +129,19 @@ class MeskotRepository(private val context: Context) {
             val liveIds = liveNotifs.map { it.id }.toSet()
             val remainingLocal = _notifications.value.filterNot { it.id in liveIds }
             _notifications.value = (liveNotifs + remainingLocal).sortedByDescending { it.createdAt }
+        }
+
+        incomingCallsListenerRegistration?.remove()
+        incomingCallsListenerRegistration = FirebaseManager.listenToIncomingCalls(uid) { session ->
+            if (_incomingCall.value?.callId != session.callId && session.status == "ringing") {
+                _incomingCall.value = session
+            }
+        }
+
+        // Direct real-time message streams for this user
+        userMessageRegistrations.forEach { it.remove() }
+        userMessageRegistrations = FirebaseManager.listenToUserMessages(uid) { liveMsgs ->
+            mergeMessagesIntoConversations(liveMsgs, notifyIncoming = true)
         }
     }
 
@@ -121,34 +167,10 @@ class MeskotRepository(private val context: Context) {
                 }
             }
 
-            // Real-time Messages synchronization
-            FirebaseManager.listenToMessages { liveMessages ->
-                val currentMap = _conversations.value.toMutableMap()
-                val currentUid = _currentUser.value?.uid
-                liveMessages.forEach { msg ->
-                    // Index by convoId
-                    if (msg.convoId.isNotBlank()) {
-                        val existing = currentMap[msg.convoId] ?: emptyList()
-                        if (existing.none { it.id == msg.id }) {
-                            currentMap[msg.convoId] = (existing + msg).sortedBy { it.createdAt }
-                        }
-                    }
-                    // Index by recipient for sender
-                    if (msg.toUid.isNotBlank()) {
-                        val existingForTo = currentMap[msg.toUid] ?: emptyList()
-                        if (existingForTo.none { it.id == msg.id }) {
-                            currentMap[msg.toUid] = (existingForTo + msg).sortedBy { it.createdAt }
-                        }
-                    }
-                    // Index by sender for recipient
-                    if (msg.fromUid.isNotBlank()) {
-                        val existingForFrom = currentMap[msg.fromUid] ?: emptyList()
-                        if (existingForFrom.none { it.id == msg.id }) {
-                            currentMap[msg.fromUid] = (existingForFrom + msg).sortedBy { it.createdAt }
-                        }
-                    }
-                }
-                _conversations.value = currentMap
+            // Global real-time Messages synchronization
+            generalMessagesRegistration?.remove()
+            generalMessagesRegistration = FirebaseManager.listenToMessages { liveMessages ->
+                mergeMessagesIntoConversations(liveMessages, notifyIncoming = true)
             }
 
             // Real-time Friend Requests synchronization
@@ -215,6 +237,7 @@ class MeskotRepository(private val context: Context) {
             onSuccess = { fbUser ->
                 _currentUser.value = fbUser
                 setupUserSpecificListeners(fbUser.uid)
+                setupFirebaseListeners()
                 if (_users.value.none { it.uid == fbUser.uid }) {
                     _users.value = _users.value + fbUser
                 }
@@ -235,6 +258,7 @@ class MeskotRepository(private val context: Context) {
             onSuccess = { fbUser ->
                 _currentUser.value = fbUser
                 setupUserSpecificListeners(fbUser.uid)
+                setupFirebaseListeners()
                 if (_users.value.none { it.uid == fbUser.uid }) {
                     _users.value = _users.value + fbUser
                 }
@@ -250,11 +274,22 @@ class MeskotRepository(private val context: Context) {
     fun switchUser(user: User) {
         _currentUser.value = user
         setupUserSpecificListeners(user.uid)
+        setupFirebaseListeners()
     }
 
     fun logout() {
         notifListenerRegistration?.remove()
         notifListenerRegistration = null
+        incomingCallsListenerRegistration?.remove()
+        incomingCallsListenerRegistration = null
+        activeCallListenerRegistration?.remove()
+        activeCallListenerRegistration = null
+        userMessageRegistrations.forEach { it.remove() }
+        userMessageRegistrations = emptyList()
+        generalMessagesRegistration?.remove()
+        generalMessagesRegistration = null
+        _incomingMessageAlert.value = null
+        _incomingCall.value = null
         FirebaseManager.signOut()
         _currentUser.value = null
     }
@@ -543,6 +578,63 @@ class MeskotRepository(private val context: Context) {
     }
 
     // MESSAGES & CHAT
+    fun mergeMessagesIntoConversations(liveMessages: List<ChatMessage>, notifyIncoming: Boolean = true) {
+        if (liveMessages.isEmpty()) return
+        val currentUid = _currentUser.value?.uid
+        val currentMap = _conversations.value.toMutableMap()
+        var hasNewIncoming = false
+        var latestIncomingMsg: ChatMessage? = null
+
+        liveMessages.forEach { msg ->
+            val convoId = if (msg.convoId.isNotBlank()) msg.convoId else {
+                if (msg.fromUid < msg.toUid) "${msg.fromUid}_${msg.toUid}" else "${msg.toUid}_${msg.fromUid}"
+            }
+
+            // Check if this is a newly arrived message addressed to current user
+            if (currentUid != null && msg.toUid == currentUid && msg.fromUid != currentUid && !msg.isCallLog) {
+                val existingList = currentMap[msg.fromUid] ?: emptyList()
+                if (existingList.none { it.id == msg.id }) {
+                    hasNewIncoming = true
+                    if (latestIncomingMsg == null || msg.createdAt > latestIncomingMsg!!.createdAt) {
+                        latestIncomingMsg = msg
+                    }
+                }
+            }
+
+            fun updateList(key: String) {
+                val list = currentMap[key] ?: emptyList()
+                val idx = list.indexOfFirst { it.id == msg.id }
+                val updated = if (idx >= 0) {
+                    list.toMutableList().apply { set(idx, msg) }
+                } else {
+                    (list + msg).sortedBy { it.createdAt }
+                }
+                currentMap[key] = updated
+            }
+
+            // 1. Index by convoId
+            if (convoId.isNotBlank()) {
+                updateList(convoId)
+            }
+            // 2. Index by toUid
+            if (msg.toUid.isNotBlank()) {
+                updateList(msg.toUid)
+            }
+            // 3. Index by fromUid
+            if (msg.fromUid.isNotBlank()) {
+                updateList(msg.fromUid)
+            }
+        }
+
+        _conversations.value = currentMap
+
+        // Play sound and trigger heads-up incoming notification in real time
+        if (hasNewIncoming && notifyIncoming && latestIncomingMsg != null) {
+            com.example.util.CallAudioManager.playMessageReceivedSound(context)
+            _incomingMessageAlert.value = latestIncomingMsg
+        }
+    }
+
     fun getMessages(otherUid: String): List<ChatMessage> {
         val user = _currentUser.value
         val fromDirectKey = _conversations.value[otherUid] ?: emptyList()
@@ -559,19 +651,23 @@ class MeskotRepository(private val context: Context) {
         val user = _currentUser.value ?: return
         val convoId = if (user.uid < otherUid) "${user.uid}_$otherUid" else "${otherUid}_${user.uid}"
         val newMsg = ChatMessage(
-            id = "msg_" + System.currentTimeMillis(),
+            id = "msg_" + System.currentTimeMillis() + "_" + java.util.UUID.randomUUID().toString().take(6),
             convoId = convoId,
             fromUid = user.uid,
             toUid = otherUid,
             text = text,
             createdAt = System.currentTimeMillis()
         )
-        val currentMsgs = _conversations.value[otherUid] ?: emptyList()
-        _conversations.value = _conversations.value + (otherUid to (currentMsgs + newMsg))
+        // Zero-latency instant local update across convoId and direct UID
+        mergeMessagesIntoConversations(listOf(newMsg), notifyIncoming = false)
+        com.example.util.CallAudioManager.playMessageSentSound()
+
+        // Instant write to Firestore
         FirebaseManager.sendMessage(newMsg)
 
+        // Instant push notification to recipient
         val notif = NotificationItem(
-            id = "notif_" + System.currentTimeMillis(),
+            id = "notif_" + System.currentTimeMillis() + "_" + java.util.UUID.randomUUID().toString().take(6),
             fromUid = user.uid,
             fromName = user.displayName,
             fromPhoto = user.photoUrl,
@@ -586,10 +682,12 @@ class MeskotRepository(private val context: Context) {
 
     fun logCall(otherUid: String, callType: String, callStatus: String, durationSec: Int) {
         val user = _currentUser.value ?: return
+        val convoId = if (user.uid < otherUid) "${user.uid}_$otherUid" else "${otherUid}_${user.uid}"
         val newMsg = ChatMessage(
-            id = "call_" + System.currentTimeMillis(),
-            convoId = otherUid,
+            id = "call_" + System.currentTimeMillis() + "_" + java.util.UUID.randomUUID().toString().take(6),
+            convoId = convoId,
             fromUid = user.uid,
+            toUid = otherUid,
             text = if (callType == "video") "Video call" else "Audio call",
             isCallLog = true,
             callType = callType,
@@ -597,20 +695,100 @@ class MeskotRepository(private val context: Context) {
             callDurationSec = durationSec,
             createdAt = System.currentTimeMillis()
         )
-        val currentMsgs = _conversations.value[otherUid] ?: emptyList()
-        _conversations.value = _conversations.value + (otherUid to (currentMsgs + newMsg))
+        mergeMessagesIntoConversations(listOf(newMsg), notifyIncoming = false)
+        FirebaseManager.sendMessage(newMsg)
+    }
+
+    // CALL SIGNALING METHODS
+    fun initiateCall(recipient: User, callType: String, onStarted: (CallSession) -> Unit) {
+        val cur = _currentUser.value ?: return
+        val callId = "call_${System.currentTimeMillis()}_${cur.uid.take(4)}_${recipient.uid.take(4)}"
+        val cleanRoomId = "meskot_call_${callId.replace("_", "").replace("-", "").lowercase()}"
+        val session = CallSession(
+            callId = callId,
+            callerUid = cur.uid,
+            callerName = cur.displayName,
+            callerPhoto = cur.photoUrl,
+            receiverUid = recipient.uid,
+            receiverName = recipient.displayName,
+            receiverPhoto = recipient.photoUrl,
+            callType = callType,
+            status = "ringing",
+            roomUrl = "https://meet.jit.si/$cleanRoomId#config.prejoinPageEnabled=false&config.startWithAudioMuted=false&config.startWithVideoMuted=${if (callType == "audio") "true" else "false"}&interfaceConfig.TOOLBAR_BUTTONS=[]",
+            createdAt = System.currentTimeMillis()
+        )
+        FirebaseManager.createCall(session) { ok ->
+            if (ok) {
+                onStarted(session)
+            }
+        }
+    }
+
+    fun listenToCallSession(callId: String, onUpdate: (CallSession?) -> Unit) {
+        activeCallListenerRegistration?.remove()
+        activeCallListenerRegistration = FirebaseManager.listenToCall(callId) { session ->
+            onUpdate(session)
+        }
+    }
+
+    fun stopListeningToCallSession() {
+        activeCallListenerRegistration?.remove()
+        activeCallListenerRegistration = null
+    }
+
+    fun acceptIncomingCall(callId: String) {
+        _incomingCall.value = null
+        FirebaseManager.updateCallStatus(callId, "accepted", startedAt = System.currentTimeMillis())
+    }
+
+    fun declineIncomingCall(callId: String) {
+        val inc = _incomingCall.value
+        _incomingCall.value = null
+        FirebaseManager.updateCallStatus(callId, "rejected", endedAt = System.currentTimeMillis())
+        if (inc != null) {
+            logCall(inc.callerUid, inc.callType, "missed", 0)
+        }
+    }
+
+    fun dismissIncomingCall() {
+        _incomingCall.value = null
+    }
+
+    fun terminateCall(callId: String, otherUid: String, callType: String, durationSec: Int) {
+        stopListeningToCallSession()
+        FirebaseManager.updateCallStatus(callId, "ended", endedAt = System.currentTimeMillis())
+        logCall(
+            otherUid = otherUid,
+            callType = callType,
+            callStatus = if (durationSec > 0) "completed" else "missed",
+            durationSec = durationSec
+        )
     }
 
     fun editMessage(otherUid: String, msgId: String, newText: String) {
-        val currentMsgs = _conversations.value[otherUid] ?: return
-        _conversations.value = _conversations.value + (otherUid to currentMsgs.map {
-            if (it.id == msgId) it.copy(text = newText, editedAt = System.currentTimeMillis()) else it
-        })
+        val currentMap = _conversations.value.toMutableMap()
+        currentMap.keys.forEach { key ->
+            val list = currentMap[key] ?: emptyList()
+            if (list.any { it.id == msgId }) {
+                currentMap[key] = list.map {
+                    if (it.id == msgId) it.copy(text = newText, editedAt = System.currentTimeMillis()) else it
+                }
+            }
+        }
+        _conversations.value = currentMap
+        FirebaseManager.updateMessageText(msgId, newText)
     }
 
     fun deleteMessage(otherUid: String, msgId: String) {
-        val currentMsgs = _conversations.value[otherUid] ?: return
-        _conversations.value = _conversations.value + (otherUid to currentMsgs.filterNot { it.id == msgId })
+        val currentMap = _conversations.value.toMutableMap()
+        currentMap.keys.forEach { key ->
+            val list = currentMap[key] ?: emptyList()
+            if (list.any { it.id == msgId }) {
+                currentMap[key] = list.filterNot { it.id == msgId }
+            }
+        }
+        _conversations.value = currentMap
+        FirebaseManager.deleteMessage(msgId)
     }
 
     // GROUPS
